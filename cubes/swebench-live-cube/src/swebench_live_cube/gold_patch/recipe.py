@@ -19,6 +19,11 @@ Usage:
     .venv/bin/python -m swebench_live_cube.gold_patch.recipe --subset lite \\
         --toolkit --eai-profile yul101 --eai-path ~/bin/eai \\
         --n-parallel 50 --n-runs 3 --dump-solvable solvable_lite_stable.json
+
+    # Same on Daytona (root) — catches tasks whose gold patch/eval needs root,
+    # which the non-root Toolkit scores 0 (DAYTONA_API_KEY / DAYTONA_TARGET from env):
+    .venv/bin/python -m swebench_live_cube.gold_patch.recipe --subset lite \\
+        --daytona --n-parallel 20 --dump-solvable solvable_lite_daytona.json
 """
 
 from __future__ import annotations
@@ -152,7 +157,14 @@ def _make_benchmark(subset: str | None, task_ids: list[str] | None) -> object:
     return cfg
 
 
-def _make_infra(toolkit: bool, eai_profile: str, eai_path: str, launch_timeout: int) -> object:
+def _make_infra(toolkit: bool, daytona: bool, eai_profile: str, eai_path: str, launch_timeout: int) -> object:
+    if daytona:
+        # Root-running infra. Required for tasks whose gold patch (or eval) needs
+        # root — the EAI Toolkit enforces a non-root uid, so those tasks score 0
+        # there. Creds (DAYTONA_API_KEY / DAYTONA_TARGET) resolve from env.
+        from cube_infra_daytona import DaytonaInfraConfig
+
+        return DaytonaInfraConfig()
     if toolkit:
         from cube_infra_toolkit import ToolkitInfraConfig
 
@@ -188,6 +200,7 @@ def run_once(
     task_ids: list[str] | None = None,
     n_parallel: int = 50,
     toolkit: bool = False,
+    daytona: bool = False,
     eai_profile: str = "yul101",
     eai_path: str = "eai",
     launch_timeout: int = 900,
@@ -207,9 +220,9 @@ def run_once(
             return retry_dir, ExpResult(exp_id="retry-noop", tasks_num=0)
         logger.info("Retrying %d CANCELLED task(s) from %s", len(cancelled), retry_dir)
         task_ids = cancelled
-    infra = _make_infra(toolkit, eai_profile, eai_path, launch_timeout)
+    infra = _make_infra(toolkit, daytona, eai_profile, eai_path, launch_timeout)
     benchmark = _make_benchmark(subset, task_ids)
-    infra_label = f"toolkit:{eai_profile}" if toolkit else "local"
+    infra_label = "daytona" if daytona else (f"toolkit:{eai_profile}" if toolkit else "local")
     label = f" [{run_label}]" if run_label else ""
     exp = Experiment(
         name=f"gold-patch-baseline-{infra_label}",
@@ -313,11 +326,19 @@ if __name__ == "__main__":
     parser.add_argument("--dump-solvable", metavar="PATH", default=None)
     parser.add_argument("--n-parallel", type=int, default=50)
     parser.add_argument("--launch-timeout", type=int, default=900)
-    parser.add_argument("--toolkit", action="store_true")
+    parser.add_argument("--toolkit", action="store_true", help="Run on the EAI Toolkit (non-root uid).")
+    parser.add_argument(
+        "--daytona",
+        action="store_true",
+        help="Run on Daytona (root). Needed for tasks whose gold patch/eval requires root.",
+    )
     parser.add_argument("--eai-profile", default="yul101")
     parser.add_argument("--eai-path", default="eai")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
+
+    if args.toolkit and args.daytona:
+        parser.error("--toolkit and --daytona are mutually exclusive; pick one infra.")
 
     # Post-hoc intersection: skip running, just intersect existing run dirs.
     if args.from_runs:
@@ -337,6 +358,7 @@ if __name__ == "__main__":
         n_parallel=args.n_parallel,
         launch_timeout=args.launch_timeout,
         toolkit=args.toolkit,
+        daytona=args.daytona,
         eai_profile=args.eai_profile,
         eai_path=args.eai_path,
         retry_dir=Path(args.retry) if args.retry else None,
