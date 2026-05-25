@@ -162,9 +162,12 @@ def _make_infra(toolkit: bool, daytona: bool, eai_profile: str, eai_path: str, l
         # Root-running infra. Required for tasks whose gold patch (or eval) needs
         # root — the EAI Toolkit enforces a non-root uid, so those tasks score 0
         # there. Creds (DAYTONA_API_KEY / DAYTONA_TARGET) resolve from env.
+        # Honor --launch-timeout: Daytona's own default is 180s, which is too
+        # tight when many sandboxes are created at once (high --n-parallel) and
+        # yields spurious DaytonaTimeoutError launch failures.
         from cube_infra_daytona import DaytonaInfraConfig
 
-        return DaytonaInfraConfig()
+        return DaytonaInfraConfig(launch_timeout_seconds=launch_timeout)
     if toolkit:
         from cube_infra_toolkit import ToolkitInfraConfig
 
