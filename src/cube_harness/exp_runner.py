@@ -491,6 +491,11 @@ def _poll_ray(
     completed = 0
     episodes_in_progress = list(ref_to_traj_id.keys())
     last_exp_hb = time.time()
+    # Timestamp since which Ray has *continuously* had a free CPU slot it isn't using.
+    # Reset to None whenever the cluster is fully busy. A QUEUED task is only an orphan
+    # if this idle window persists (see _kill_stale_workers) — distinguishing "Ray can't
+    # schedule it" from "it's waiting its turn behind busy workers."
+    idle_capacity_since: float | None = None
     while len(episodes_in_progress) > 0:
         done, episodes_in_progress = ray.wait(
             episodes_in_progress,
@@ -519,6 +524,12 @@ def _poll_ray(
                 logger.exception(f"Run failed with exception: {e}")
                 results.failures[traj_id] = str(e)
 
+        # Track sustained idle worker capacity from Ray's own accounting (robust to dead
+        # workers — Ray keeps its logical CPU pool, so this reflects genuinely schedulable
+        # slots, unlike counting RUNNING status files).
+        has_idle_capacity = ray.available_resources().get("CPU", 0) >= 1
+        idle_capacity_since = (idle_capacity_since or time.time()) if has_idle_capacity else None
+
         # Driver-side step timeout via filesystem read (replaces ray-dashboard list_tasks).
         _kill_stale_workers(
             episodes_in_progress,
@@ -529,6 +540,7 @@ def _poll_ray(
             setup_timeout_s=setup_timeout_s,
             cancel_grace_s=cancel_grace_s,
             orphan_threshold_s=orphan_threshold_s,
+            idle_capacity_since=idle_capacity_since,
         )
 
         # Heartbeat experiment_status.json so XRay knows this driver is alive.
@@ -562,6 +574,7 @@ def _kill_stale_workers(
     setup_timeout_s: float,
     cancel_grace_s: float,
     orphan_threshold_s: float = DEFAULT_ORPHAN_THRESHOLD_S,
+    idle_capacity_since: float | None = None,
 ) -> None:
     """Read each active episode's status.json; force-kill stalled/orphaned workers.
 
@@ -570,10 +583,14 @@ def _kill_stale_workers(
       (current_step == 0) get `setup_timeout_s`, episodes in the agent loop get the full
       `step_timeout_s`. Detects setup hangs (container boot, env reset) quickly without
       shortening the budget for legitimate long-running agent steps.
-    - **QUEUED** past `orphan_threshold_s` — Ray never picked the episode up (worker died
-      or the task is unschedulable). There's no heartbeat to age, so the wait is bounded
-      from `started_at`. Without this a stuck-QUEUED ref keeps `episodes_in_progress`
-      non-empty forever and hangs the poll loop.
+    - **QUEUED orphan** — Ray never picked the episode up (worker died / unschedulable).
+      Detected by *idle worker capacity*, not elapsed time: `idle_capacity_since` is the
+      timestamp (from the caller) since which Ray has had a free CPU slot it isn't using.
+      Only when that idle capacity has persisted past `orphan_threshold_s` (so it's not a
+      momentary turnover dip) is a still-QUEUED task genuinely unschedulable. A purely
+      time-based bound (`now - started_at`) false-cancels tasks that are legitimately
+      waiting their turn behind busy workers on a deep queue (was auto-fix(445); see PR
+      459). `idle_capacity_since=None` ⇒ all slots busy ⇒ QUEUED never cancelled.
     """
     now = time.time()
     to_remove: list[ray.ObjectRef] = []
@@ -582,13 +599,22 @@ def _kill_stale_workers(
         status = storage.read_episode_status(traj_id)
         if status is None:
             continue
-        # auto-fix(445)↓
-        # QUEUED orphan: never picked up by a worker (no heartbeat). Bound from started_at.
+        # auto-fix(459)↓
+        # QUEUED orphan: cancel only when Ray has had *idle* capacity it left unused,
+        # sustained past orphan_threshold_s while this task waited — i.e. Ray could have
+        # scheduled it but didn't. Gating on idle capacity (not elapsed time) is what stops
+        # the deep-queue false-cancel that the old time-only bound caused (auto-fix(445)).
         if status.status != "RUNNING" or status.last_heartbeat_at is None:
-            if status.status == "QUEUED" and now - status.started_at > orphan_threshold_s:
+            idle_for = (now - idle_capacity_since) if idle_capacity_since is not None else 0.0
+            if (
+                status.status == "QUEUED"
+                and idle_capacity_since is not None
+                and idle_for > orphan_threshold_s
+                and now - status.started_at > orphan_threshold_s
+            ):
                 logger.error(
-                    f"Episode {traj_id} stuck QUEUED for {now - status.started_at:.0f}s "
-                    f"(>{orphan_threshold_s:.0f}s) — Ray never picked it up; force killing"
+                    f"Episode {traj_id} stuck QUEUED for {now - status.started_at:.0f}s while Ray had idle "
+                    f"capacity for {idle_for:.0f}s (>{orphan_threshold_s:.0f}s) — unschedulable; force killing"
                 )
                 try:
                     ray.cancel(ref, force=True)
@@ -602,12 +628,12 @@ def _kill_stale_workers(
                 status.status = "CANCELLED"
                 status.ended_at = now
                 status.error_type = "OrphanedInQueue"
-                status.error_message = f"never picked up by a Ray worker within {orphan_threshold_s:.0f}s"
+                status.error_message = f"unschedulable: QUEUED with idle worker capacity for >{orphan_threshold_s:.0f}s"
                 storage.write_episode_status(traj_id, status)
                 results.failures[traj_id] = status.error_message
                 to_remove.append(ref)
             continue
-        # /auto-fix(445)
+        # /auto-fix(459)
         age = now - status.last_heartbeat_at
         budget = setup_timeout_s if status.current_step == 0 else step_timeout_s
         if age <= budget + cancel_grace_s:
@@ -797,4 +823,24 @@ def _run_sequentially_impl(
 
 
 # === auto-fix notes ===  (spec: openspec/specs/auto-fix/spec.md)
-# auto-fix-note(445) {class=L1 anchor=PR#445 hash=PENDING ctx=ray-runner/queued-orphan-timeout/orphan_threshold_s-was-plumbed-but-never-consumed/cube-harness@0c3861ca}
+# auto-fix-note(459) {class=L1 anchor=PR#459 hash=PENDING ctx=ray-runner/queued-orphan-capacity-gate/supersedes-445/cube-harness@69d126b1}
+#   symptoms:  swebench-live lite-300 gold run, --n-parallel 20: 141/300 episodes
+#              cancelled as OrphanedInQueue mid-run. They were not orphaned — tasks
+#              ≫ workers + slow heavy-repo evals meant the queue tail legitimately
+#              waited >1h (orphan_threshold_s) behind busy workers and got killed.
+#   invariant: a QUEUED episode is cancelled as an orphan ONLY when Ray has had idle
+#              worker capacity it left unused (i.e. could have scheduled the task but
+#              didn't), sustained past orphan_threshold_s. When all slots are busy,
+#              QUEUED is never cancelled no matter how long it waits.
+#   why:       #445 used a time-only bound (now - started_at > threshold), which can't
+#              tell "Ray never scheduled this (dead worker)" from "waiting its turn."
+#              Gate on ray.available_resources()['CPU'] (Ray's own schedulable-capacity
+#              accounting — robust to dead workers, unlike counting RUNNING files),
+#              persisted across polls (idle_capacity_since) to ignore turnover dips.
+#              Preserves #445's anti-hang guarantee: a genuine orphan (idle capacity +
+#              stuck QUEUED) is still cancelled; the RUNNING stale-heartbeat path is
+#              untouched. Supersedes auto-fix(445).
+#   tested:    tests/test_experiment.py — QUEUED + all-slots-busy (idle_capacity_since
+#              None) not cancelled even at 2h; QUEUED + sustained idle capacity cancelled;
+#              momentary idle dip (idle_capacity_since just set) not cancelled.
+#   hash=PENDING: stamped by scripts/auto_fix_lint.py (Tier-1) on first run.

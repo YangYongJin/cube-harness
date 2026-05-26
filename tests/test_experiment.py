@@ -971,12 +971,14 @@ class TestKillStaleWorkersRaceGuard:
 
 
 class TestKillStaleWorkersQueuedOrphan:
-    """Unit tests for the QUEUED-orphan timeout in _kill_stale_workers.
+    """Unit tests for the capacity-gated QUEUED-orphan detection in _kill_stale_workers.
 
-    A driver-pre-claimed episode that Ray never picks up (worker died /
-    unschedulable) has no heartbeat to age; it is failed after `orphan_threshold_s`
-    from `started_at` so a stuck-QUEUED ref can't keep the poll loop alive forever.
-    Regression for the prove-plus-comm stall (dead Ray worker stranded its task).
+    A QUEUED episode is cancelled as an orphan ONLY when Ray has had idle worker
+    capacity it left unused (`idle_capacity_since`), sustained past `orphan_threshold_s`
+    while the task waited — i.e. Ray could have scheduled it but didn't (dead worker /
+    unschedulable). When all slots are busy (`idle_capacity_since is None`) a QUEUED task
+    is left alone no matter how long it waits, so a deep queue (tasks >> workers) doesn't
+    false-cancel tasks legitimately waiting their turn (supersedes auto-fix(445)).
     """
 
     def _queued_status(self, task_id: str, started_age: float) -> EpisodeStatus:
@@ -991,6 +993,7 @@ class TestKillStaleWorkersQueuedOrphan:
         )
 
     def test_orphaned_queued_past_threshold_is_cancelled(self, tmp_dir) -> None:
+        """Idle capacity sustained past the threshold while QUEUED → genuine orphan → cancelled."""
         storage = FileStorage(tmp_dir)
         traj_id = "task_orphan_ep0"
         queued = self._queued_status("task_orphan", started_age=7200)  # 2h in QUEUED
@@ -1014,6 +1017,7 @@ class TestKillStaleWorkersQueuedOrphan:
                 setup_timeout_s=1.0,
                 cancel_grace_s=1.0,
                 orphan_threshold_s=3600.0,
+                idle_capacity_since=time.time() - 7200,  # Ray idle for 2h → could've scheduled it
             )
 
         mock_cancel.assert_called_once_with(fake_ref, force=True)
@@ -1025,6 +1029,7 @@ class TestKillStaleWorkersQueuedOrphan:
         assert fake_ref not in episodes_in_progress
 
     def test_fresh_queued_is_left_alone(self, tmp_dir) -> None:
+        """Recently-QUEUED (< threshold) not cancelled even with idle capacity available."""
         storage = FileStorage(tmp_dir)
         traj_id = "task_fresh_ep0"
         queued = self._queued_status("task_fresh", started_age=30)  # only 30s in QUEUED
@@ -1048,6 +1053,76 @@ class TestKillStaleWorkersQueuedOrphan:
                 setup_timeout_s=1.0,
                 cancel_grace_s=1.0,
                 orphan_threshold_s=3600.0,
+                idle_capacity_since=time.time() - 7200,  # capacity free, but task only 30s old
+            )
+
+        mock_cancel.assert_not_called()
+        mock_write.assert_not_called()
+        assert traj_id not in results.failures
+        assert fake_ref in episodes_in_progress
+
+    def test_queued_not_cancelled_when_workers_busy(self, tmp_dir) -> None:
+        """THE FIX: a long-QUEUED task is NOT cancelled while all workers are busy
+        (idle_capacity_since is None) — it's legitimately waiting its turn, not orphaned.
+        Regression for the deep-queue mass-cancellation (141/300 in a swebench-live run)."""
+        storage = FileStorage(tmp_dir)
+        traj_id = "task_waiting_ep0"
+        queued = self._queued_status("task_waiting", started_age=7200)  # 2h in QUEUED
+
+        fake_ref = MagicMock()
+        ref_to_traj_id = {fake_ref: traj_id}
+        results = ExpResult(exp_id="test", tasks_num=1)
+        episodes_in_progress = [fake_ref]
+
+        with (
+            patch("cube_harness.exp_runner.ray.cancel") as mock_cancel,
+            patch.object(storage, "read_episode_status", side_effect=[queued]),
+            patch.object(storage, "write_episode_status") as mock_write,
+        ):
+            _kill_stale_workers(
+                episodes_in_progress,
+                ref_to_traj_id,
+                storage,
+                results,
+                step_timeout_s=1.0,
+                setup_timeout_s=1.0,
+                cancel_grace_s=1.0,
+                orphan_threshold_s=3600.0,
+                idle_capacity_since=None,  # all worker slots busy → not an orphan
+            )
+
+        mock_cancel.assert_not_called()
+        mock_write.assert_not_called()
+        assert traj_id not in results.failures
+        assert fake_ref in episodes_in_progress
+
+    def test_queued_not_cancelled_on_momentary_idle_dip(self, tmp_dir) -> None:
+        """Idle capacity that only just appeared (turnover dip between a completion and the
+        next dispatch) does not cancel a QUEUED task — the idle window must persist."""
+        storage = FileStorage(tmp_dir)
+        traj_id = "task_dip_ep0"
+        queued = self._queued_status("task_dip", started_age=7200)
+
+        fake_ref = MagicMock()
+        ref_to_traj_id = {fake_ref: traj_id}
+        results = ExpResult(exp_id="test", tasks_num=1)
+        episodes_in_progress = [fake_ref]
+
+        with (
+            patch("cube_harness.exp_runner.ray.cancel") as mock_cancel,
+            patch.object(storage, "read_episode_status", side_effect=[queued]),
+            patch.object(storage, "write_episode_status") as mock_write,
+        ):
+            _kill_stale_workers(
+                episodes_in_progress,
+                ref_to_traj_id,
+                storage,
+                results,
+                step_timeout_s=1.0,
+                setup_timeout_s=1.0,
+                cancel_grace_s=1.0,
+                orphan_threshold_s=3600.0,
+                idle_capacity_since=time.time() - 5,  # idle for only 5s << threshold
             )
 
         mock_cancel.assert_not_called()
@@ -1088,6 +1163,7 @@ class TestKillStaleWorkersQueuedOrphan:
                 setup_timeout_s=1.0,
                 cancel_grace_s=1.0,
                 orphan_threshold_s=3600.0,
+                idle_capacity_since=time.time() - 7200,  # reach the orphan-cancel path
             )
 
         # Did not clobber the now-RUNNING status.
