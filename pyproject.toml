@@ -52,6 +52,13 @@ build-backend = "uv_build"
 [tool.uv]
 constraint-dependencies = ["pyasn1>=0.6.2", "cryptography>=46.0.5", "protobuf>=6.33.5"]
 
+# LOCAL-DEV-ONLY override (do NOT commit per cube-harness CLAUDE.md
+# §Cross-repo PRs). Points cube-standard at the local checkout on the
+# refactor/validated-config branch so dev-tip cube-harness can resolve
+# ValidatedConfig before cube-standard cuts a new rc. Revert before any PR.
+[tool.uv.sources]
+cube-standard = { path = "cube-standard", editable = true }
+
 
 [tool.ruff]
 fix = true

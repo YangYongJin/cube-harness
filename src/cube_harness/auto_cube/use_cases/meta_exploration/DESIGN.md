@@ -154,16 +154,16 @@ Pure-function, 8-rule, first-match-wins. Implemented in
 | # | Trigger | Pick | Info gathered |
 |---|---|---|---|
 | 1 | `cheat_only` AND ≥2 attempts | `RETEST_PROMOTION` | does the cheat generalize? (Phase 2 gate fires) |
-| 2 | brand-new task | `DEFAULT` | baseline trajectory |
+| 2 | brand-new task | `BASELINE` | baseline trajectory |
 | 3 | any past reward in (0, 0.5) | `ESCALATE_MODEL` | capability-bound vs structural |
-| 4 | ≥3 attempts, all 0 reward | `PROFILING_DIAGNOSIS` | cheap confirmation before unsteerable |
+| 4 | ≥3 attempts, all 0 reward | `DIAGNOSE_PROFILING` | cheap confirmation before unsteerable |
 | 5a | one+ fails + loop note | `DIAGNOSE_SCAFFOLDING` | route to scaffolding recipe |
 | 5b | one+ fails + timeout note | `EXTEND_TIMEOUT` | bump bash to 600s |
 | 5c | one+ fails + no notes | `WIDEN_SEARCH` | k=3 + topk_branch perturbation |
-| 8 | fallthrough | `DEFAULT` | safe fallback |
+| 8 | fallthrough | `BASELINE` | safe fallback |
 
 After any pick, a **budget check**: if the picked config's approx cost
-exceeds remaining budget, downgrade to `PROFILING_DIAGNOSIS` with the
+exceeds remaining budget, downgrade to `DIAGNOSE_PROFILING` with the
 original pick logged in `alternatives_considered`.
 
 ### Tunable thresholds (open to revision)

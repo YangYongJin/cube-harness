@@ -87,17 +87,17 @@ class EpisodeConfig:
 # Named menu — the policy's action set
 # ---------------------------------------------------------------------------
 
-DEFAULT = EpisodeConfig()
+BASELINE = EpisodeConfig()
 """Cheap baseline. First attempt or fallback when no signal."""
 
-EXPLORATORY_BREADTH = EpisodeConfig(
+WIDEN_SEARCH = EpisodeConfig(
     k_candidates=3,
     perturbations=("topk_branch",),
 )
 """Wide action sampling + branching. Use when: no signal after 1 try;
 hinter would benefit from seeing what the agent ALMOST did."""
 
-STRONG_MODEL = EpisodeConfig(
+ESCALATE_MODEL = EpisodeConfig(
     model="azure/gpt-5",
     k_candidates=1,
 )
@@ -105,7 +105,7 @@ STRONG_MODEL = EpisodeConfig(
 weaker model got partial reward); we want to disambiguate capability-
 bound failure vs structural failure."""
 
-REFINER_ENABLED = EpisodeConfig(
+ENABLE_REFINER = EpisodeConfig(
     enable_refiner=True,
 )
 """Mid-rollout LLM refiner. Use when: prior trajectory shows the
@@ -120,20 +120,20 @@ RETEST_PROMOTION = EpisodeConfig(
 has been ``cheat_only`` across iters and we want to test promotion
 generalization."""
 
-LONG_BUILD_TASK = EpisodeConfig(
+EXTEND_TIMEOUT = EpisodeConfig(
     bash_default_timeout=600,
 )
 """Bumped bash timeout. Use when: prior trajectory shows pip-install
 / build commands hitting the 120s default."""
 
-SCAFFOLDING_DIAGNOSIS = EpisodeConfig(
+DIAGNOSE_SCAFFOLDING = EpisodeConfig(
     k_candidates=1,
     investigator_recipe="agent_scaffolding",
 )
 """Force scaffolding-recipe routing. Use when: hinter recipe keeps
 returning empty (failure is structural, not steerable)."""
 
-PROFILING_DIAGNOSIS = EpisodeConfig(
+DIAGNOSE_PROFILING = EpisodeConfig(
     k_candidates=1,
     investigator_recipe="profiling",
 )
@@ -144,14 +144,14 @@ unsteerable. Profiling recipe is the cheapest Investigator dispatch
 
 
 EPISODE_CONFIG_MENU: dict[str, EpisodeConfig] = {
-    "DEFAULT": DEFAULT,
-    "EXPLORATORY_BREADTH": EXPLORATORY_BREADTH,
-    "STRONG_MODEL": STRONG_MODEL,
-    "REFINER_ENABLED": REFINER_ENABLED,
+    "BASELINE": BASELINE,
+    "WIDEN_SEARCH": WIDEN_SEARCH,
+    "ESCALATE_MODEL": ESCALATE_MODEL,
+    "ENABLE_REFINER": ENABLE_REFINER,
     "RETEST_PROMOTION": RETEST_PROMOTION,
-    "LONG_BUILD_TASK": LONG_BUILD_TASK,
-    "SCAFFOLDING_DIAGNOSIS": SCAFFOLDING_DIAGNOSIS,
-    "PROFILING_DIAGNOSIS": PROFILING_DIAGNOSIS,
+    "EXTEND_TIMEOUT": EXTEND_TIMEOUT,
+    "DIAGNOSE_SCAFFOLDING": DIAGNOSE_SCAFFOLDING,
+    "DIAGNOSE_PROFILING": DIAGNOSE_PROFILING,
 }
 
 
@@ -159,14 +159,14 @@ EPISODE_CONFIG_MENU: dict[str, EpisodeConfig] = {
 # Order-of-magnitude — refined empirically; not load-bearing for the
 # policy's correctness, only for "would this config blow the budget?"
 _APPROX_EPISODE_COST_USD: dict[str, float] = {
-    "DEFAULT":              0.05,
-    "PROFILING_DIAGNOSIS":  0.03,
-    "EXPLORATORY_BREADTH":  0.15,
-    "STRONG_MODEL":         0.50,
-    "REFINER_ENABLED":      0.08,
+    "BASELINE":              0.05,
+    "DIAGNOSE_PROFILING":  0.03,
+    "WIDEN_SEARCH":  0.15,
+    "ESCALATE_MODEL":         0.50,
+    "ENABLE_REFINER":      0.08,
     "RETEST_PROMOTION":     0.05,
-    "LONG_BUILD_TASK":      0.10,
-    "SCAFFOLDING_DIAGNOSIS": 0.04,
+    "EXTEND_TIMEOUT":      0.10,
+    "DIAGNOSE_SCAFFOLDING": 0.04,
 }
 
 
@@ -248,23 +248,23 @@ def pick_episode_config(
     Decision tree (first match wins):
       1. ``apply_promotion`` opportunity: disposition == cheat_only AND
          ≥2 attempts → RETEST_PROMOTION (cheap; the gate decides).
-      2. Brand new task (no attempts) → DEFAULT.
-      3. Near-miss observed (any reward in (0, 0.5)) → STRONG_MODEL
+      2. Brand new task (no attempts) → BASELINE.
+      3. Near-miss observed (any reward in (0, 0.5)) → ESCALATE_MODEL
          (disambiguate capability vs structural).
-      4. Stuck streak (≥3 attempts, all 0.0) → PROFILING_DIAGNOSIS +
+      4. Stuck streak (≥3 attempts, all 0.0) → DIAGNOSE_PROFILING +
          signal to caller to consider unsteerable disposition.
-      5. One try, no signal → EXPLORATORY_BREADTH (k=3 + perturbation).
-      6. Notes flag a build/install timeout → LONG_BUILD_TASK.
-      7. Notes flag a loop pattern → SCAFFOLDING_DIAGNOSIS.
-      8. Default → DEFAULT.
+      5. One try, no signal → WIDEN_SEARCH (k=3 + perturbation).
+      6. Notes flag a build/install timeout → EXTEND_TIMEOUT.
+      7. Notes flag a loop pattern → DIAGNOSE_SCAFFOLDING.
+      8. Default → BASELINE.
 
     Budget check: if the picked config's approx cost exceeds
     ``state.budget_remaining_usd``, downgrade to the next-cheapest
     config that still preserves the decision's intent (typically
-    DEFAULT or PROFILING_DIAGNOSIS).
+    BASELINE or DIAGNOSE_PROFILING).
 
     Returns a ``PlannerDecision`` with rationale + alternatives. Never
-    raises — degrades to DEFAULT on any unexpected state.
+    raises — degrades to BASELINE on any unexpected state.
     """
     disposition = state.disposition(task_id)
     rewards = state.rewards(task_id)
@@ -291,8 +291,8 @@ def pick_episode_config(
             info_value="promotion_gate_outcome",
             alternatives=_record(
                 alternatives,
-                DEFAULT="cheat_only with no new info wouldn't change disposition",
-                EXPLORATORY_BREADTH="more breadth on a confirmed-cheat doesn't advance disposition",
+                BASELINE="cheat_only with no new info wouldn't change disposition",
+                WIDEN_SEARCH="more breadth on a confirmed-cheat doesn't advance disposition",
             ),
         )
 
@@ -300,13 +300,13 @@ def pick_episode_config(
     if n_attempts == 0:
         return _apply_budget_check(
             state,
-            picked="DEFAULT",
+            picked="BASELINE",
             rationale="first attempt; baseline config establishes the prior.",
             info_value="baseline_trajectory",
             alternatives=_record(
                 alternatives,
-                EXPLORATORY_BREADTH="expensive when we have no prior; default first",
-                STRONG_MODEL="too costly for an unprobed task",
+                WIDEN_SEARCH="expensive when we have no prior; default first",
+                ESCALATE_MODEL="too costly for an unprobed task",
             ),
         )
 
@@ -314,7 +314,7 @@ def pick_episode_config(
     if any(_NEAR_MISS_LOWER < r < _NEAR_MISS_UPPER for r in rewards):
         return _apply_budget_check(
             state,
-            picked="STRONG_MODEL",
+            picked="ESCALATE_MODEL",
             rationale=(
                 f"observed near-miss rewards {rewards}; "
                 f"bump to stronger model to disambiguate capability- vs "
@@ -323,8 +323,8 @@ def pick_episode_config(
             info_value="capability_vs_structural",
             alternatives=_record(
                 alternatives,
-                EXPLORATORY_BREADTH="breadth wouldn't tell us if capability is the bound",
-                REFINER_ENABLED="refiner addresses scaffolding, not capability",
+                WIDEN_SEARCH="breadth wouldn't tell us if capability is the bound",
+                ENABLE_REFINER="refiner addresses scaffolding, not capability",
             ),
         )
 
@@ -332,7 +332,7 @@ def pick_episode_config(
     if n_attempts >= 3 and all(r <= 0 for r in rewards):
         return _apply_budget_check(
             state,
-            picked="PROFILING_DIAGNOSIS",
+            picked="DIAGNOSE_PROFILING",
             rationale=(
                 f"{n_attempts} attempts with all-zero rewards; "
                 f"cheap confirmation before committing to unsteerable."
@@ -340,8 +340,8 @@ def pick_episode_config(
             info_value="unsteerable_confirmation",
             alternatives=_record(
                 alternatives,
-                STRONG_MODEL="reasonable to try once but expensive after many fails",
-                SCAFFOLDING_DIAGNOSIS="only if we suspect loops; default to cheap",
+                ESCALATE_MODEL="reasonable to try once but expensive after many fails",
+                DIAGNOSE_SCAFFOLDING="only if we suspect loops; default to cheap",
             ),
         )
 
@@ -351,7 +351,7 @@ def pick_episode_config(
         if saw_loop_pattern:
             return _apply_budget_check(
                 state,
-                picked="SCAFFOLDING_DIAGNOSIS",
+                picked="DIAGNOSE_SCAFFOLDING",
                 rationale=(
                     f"prior trajectory flagged loop pattern; "
                     f"route to agent_scaffolding recipe + cheap config."
@@ -359,13 +359,13 @@ def pick_episode_config(
                 info_value="scaffolding_diagnosis",
                 alternatives=_record(
                     alternatives,
-                    REFINER_ENABLED="refiner could unstick a loop — alternative worth trying next",
+                    ENABLE_REFINER="refiner could unstick a loop — alternative worth trying next",
                 ),
             )
         if saw_build_timeout:
             return _apply_budget_check(
                 state,
-                picked="LONG_BUILD_TASK",
+                picked="EXTEND_TIMEOUT",
                 rationale=(
                     f"prior trajectory flagged build/install timeout; "
                     f"bump bash default to 600s."
@@ -373,12 +373,12 @@ def pick_episode_config(
                 info_value="timeout_recovery",
                 alternatives=_record(
                     alternatives,
-                    DEFAULT="re-running at 120s would just re-time-out",
+                    BASELINE="re-running at 120s would just re-time-out",
                 ),
             )
         return _apply_budget_check(
             state,
-            picked="EXPLORATORY_BREADTH",
+            picked="WIDEN_SEARCH",
             rationale=(
                 f"first failure with default config; broaden action "
                 f"sampling (k=3 + topk_branch) so hinter sees what the "
@@ -387,15 +387,15 @@ def pick_episode_config(
             info_value="alternative_actions_surfaced",
             alternatives=_record(
                 alternatives,
-                STRONG_MODEL="cheaper to test breadth first; stronger model is escalation",
-                REFINER_ENABLED="alternative — only if first failure looked stuck/looping",
+                ESCALATE_MODEL="cheaper to test breadth first; stronger model is escalation",
+                ENABLE_REFINER="alternative — only if first failure looked stuck/looping",
             ),
         )
 
     # Rule 8 — fallback.
     return _apply_budget_check(
         state,
-        picked="DEFAULT",
+        picked="BASELINE",
         rationale="no rule matched; default config.",
         info_value="baseline_trajectory",
         alternatives=alternatives,
@@ -423,7 +423,7 @@ def _apply_budget_check(
     """If ``picked`` exceeds remaining budget, downgrade to cheapest."""
     cost = _APPROX_EPISODE_COST_USD.get(picked, 0.10)
     if cost > state.budget_remaining_usd:
-        fallback = "PROFILING_DIAGNOSIS"
+        fallback = "DIAGNOSE_PROFILING"
         rationale_aug = (
             f"{rationale} | DOWNGRADED to {fallback}: picked={picked!r} "
             f"approx ${cost:.2f} > budget ${state.budget_remaining_usd:.2f}"
@@ -495,18 +495,18 @@ def summarize_plan(plan: dict[str, PlannerDecision]) -> dict[str, int]:
 
 
 __all__ = [
-    "DEFAULT",
+    "BASELINE",
     "EPISODE_CONFIG_MENU",
-    "EXPLORATORY_BREADTH",
+    "WIDEN_SEARCH",
     "EpisodeConfig",
-    "PROFILING_DIAGNOSIS",
-    "LONG_BUILD_TASK",
+    "DIAGNOSE_PROFILING",
+    "EXTEND_TIMEOUT",
     "PlannerDecision",
     "PlannerState",
-    "REFINER_ENABLED",
+    "ENABLE_REFINER",
     "RETEST_PROMOTION",
-    "SCAFFOLDING_DIAGNOSIS",
-    "STRONG_MODEL",
+    "DIAGNOSE_SCAFFOLDING",
+    "ESCALATE_MODEL",
     "pick_episode_config",
     "plan_iter",
     "summarize_plan",

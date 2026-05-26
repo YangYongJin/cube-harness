@@ -11,16 +11,16 @@ import pytest
 
 from cube_harness.meta_exploration.ledger import HintLedgerEntry
 from cube_harness.meta_exploration.planner import (
-    DEFAULT,
+    BASELINE,
     EPISODE_CONFIG_MENU,
-    EXPLORATORY_BREADTH,
-    PROFILING_DIAGNOSIS,
-    LONG_BUILD_TASK,
+    WIDEN_SEARCH,
+    DIAGNOSE_PROFILING,
+    EXTEND_TIMEOUT,
     PlannerDecision,
     PlannerState,
     RETEST_PROMOTION,
-    SCAFFOLDING_DIAGNOSIS,
-    STRONG_MODEL,
+    DIAGNOSE_SCAFFOLDING,
+    ESCALATE_MODEL,
     pick_episode_config,
     plan_iter,
     summarize_plan,
@@ -48,14 +48,14 @@ def _state(
 
 
 # ---------------------------------------------------------------------------
-# Rule 2 — brand new task → DEFAULT
+# Rule 2 — brand new task → BASELINE
 # ---------------------------------------------------------------------------
 
 
 def test_brand_new_task_routes_to_default() -> None:
     d = pick_episode_config("foo", _state())
-    assert d.config_name == "DEFAULT"
-    assert d.config == DEFAULT
+    assert d.config_name == "BASELINE"
+    assert d.config == BASELINE
     assert "first attempt" in d.rationale.lower()
 
 
@@ -64,12 +64,12 @@ def test_default_alternatives_include_breadth_and_strong_model() -> None:
     names = {alt[0] for alt in d.alternatives_considered}
     # The default-pick should record that breadth+strong-model were
     # considered and rejected because we don't have prior signal.
-    assert "EXPLORATORY_BREADTH" in names
-    assert "STRONG_MODEL" in names
+    assert "WIDEN_SEARCH" in names
+    assert "ESCALATE_MODEL" in names
 
 
 # ---------------------------------------------------------------------------
-# Rule 5 — one fail with default → EXPLORATORY_BREADTH (no special notes)
+# Rule 5 — one fail with default → WIDEN_SEARCH (no special notes)
 # ---------------------------------------------------------------------------
 
 
@@ -78,13 +78,13 @@ def test_one_fail_default_routes_to_exploratory_breadth() -> None:
         "foo",
         _state(recent_rewards={"foo": [0.0]}),
     )
-    assert d.config_name == "EXPLORATORY_BREADTH"
-    assert d.config == EXPLORATORY_BREADTH
+    assert d.config_name == "WIDEN_SEARCH"
+    assert d.config == WIDEN_SEARCH
     assert "almost did" in d.rationale.lower() or "broaden" in d.rationale.lower()
 
 
 # ---------------------------------------------------------------------------
-# Rule 5 + loop pattern note → SCAFFOLDING_DIAGNOSIS
+# Rule 5 + loop pattern note → DIAGNOSE_SCAFFOLDING
 # ---------------------------------------------------------------------------
 
 
@@ -97,12 +97,12 @@ def test_loop_pattern_note_routes_to_scaffolding_diagnosis() -> None:
             recent_rewards={"foo": [0.0]},
         ),
     )
-    assert d.config_name == "SCAFFOLDING_DIAGNOSIS"
+    assert d.config_name == "DIAGNOSE_SCAFFOLDING"
     assert "loop" in d.rationale.lower()
 
 
 # ---------------------------------------------------------------------------
-# Rule 5 + build-timeout note → LONG_BUILD_TASK
+# Rule 5 + build-timeout note → EXTEND_TIMEOUT
 # ---------------------------------------------------------------------------
 
 
@@ -115,12 +115,12 @@ def test_build_timeout_note_routes_to_long_build_task() -> None:
             recent_rewards={"build-cython-ext": [0.0]},
         ),
     )
-    assert d.config_name == "LONG_BUILD_TASK"
+    assert d.config_name == "EXTEND_TIMEOUT"
     assert "600" in d.rationale or "timeout" in d.rationale.lower()
 
 
 # ---------------------------------------------------------------------------
-# Rule 3 — near-miss → STRONG_MODEL
+# Rule 3 — near-miss → ESCALATE_MODEL
 # ---------------------------------------------------------------------------
 
 
@@ -129,8 +129,8 @@ def test_near_miss_routes_to_strong_model() -> None:
         "foo",
         _state(recent_rewards={"foo": [0.3]}),
     )
-    assert d.config_name == "STRONG_MODEL"
-    assert d.config == STRONG_MODEL
+    assert d.config_name == "ESCALATE_MODEL"
+    assert d.config == ESCALATE_MODEL
     assert "capability" in d.rationale.lower() or "stronger" in d.rationale.lower()
 
 
@@ -140,11 +140,11 @@ def test_near_miss_after_one_fail_still_picks_strong_model() -> None:
         "foo",
         _state(recent_rewards={"foo": [0.0, 0.3, 0.0]}),
     )
-    assert d.config_name == "STRONG_MODEL"
+    assert d.config_name == "ESCALATE_MODEL"
 
 
 # ---------------------------------------------------------------------------
-# Rule 4 — stuck streak → PROFILING_DIAGNOSIS
+# Rule 4 — stuck streak → DIAGNOSE_PROFILING
 # ---------------------------------------------------------------------------
 
 
@@ -153,7 +153,7 @@ def test_stuck_failure_streak_routes_to_profiling_diagnosis() -> None:
         "foo",
         _state(recent_rewards={"foo": [0.0, 0.0, 0.0]}),
     )
-    assert d.config_name == "PROFILING_DIAGNOSIS"
+    assert d.config_name == "DIAGNOSE_PROFILING"
     assert "unsteerable" in d.rationale.lower()
 
 
@@ -163,7 +163,7 @@ def test_two_fails_not_yet_stuck_routes_to_breadth() -> None:
         "foo",
         _state(recent_rewards={"foo": [0.0, 0.0]}),
     )
-    assert d.config_name == "EXPLORATORY_BREADTH"
+    assert d.config_name == "WIDEN_SEARCH"
 
 
 def test_a_pass_in_the_streak_blocks_unsteerable_routing() -> None:
@@ -175,8 +175,8 @@ def test_a_pass_in_the_streak_blocks_unsteerable_routing() -> None:
     # Has passes, so not stuck-streak (rule 4 won't fire); should
     # fall to rule 5's breadth (still failing in recent attempts).
     # But actually any(r >= 0.5) is True, so rule 5 doesn't fire either.
-    # Falls through to rule 8 fallback → DEFAULT.
-    assert d.config_name == "DEFAULT"
+    # Falls through to rule 8 fallback → BASELINE.
+    assert d.config_name == "BASELINE"
 
 
 # ---------------------------------------------------------------------------
@@ -209,8 +209,8 @@ def test_cheat_only_1_attempt_does_not_yet_retest() -> None:
         ),
     )
     # Has a pass in recent_rewards → rule 5's no-signal branch doesn't
-    # fire; falls to fallback DEFAULT.
-    assert d.config_name == "DEFAULT"
+    # fire; falls to fallback BASELINE.
+    assert d.config_name == "BASELINE"
 
 
 # ---------------------------------------------------------------------------
@@ -222,25 +222,25 @@ def test_budget_too_low_for_strong_model_downgrades_to_cap() -> None:
     d = pick_episode_config(
         "foo",
         _state(
-            recent_rewards={"foo": [0.3]},  # would normally pick STRONG_MODEL
+            recent_rewards={"foo": [0.3]},  # would normally pick ESCALATE_MODEL
             budget_remaining_usd=0.01,       # too low for $0.50
         ),
     )
-    assert d.config_name == "PROFILING_DIAGNOSIS"
+    assert d.config_name == "DIAGNOSE_PROFILING"
     assert "DOWNGRADED" in d.rationale
-    assert "STRONG_MODEL" in d.rationale
-    # The original (rejected) STRONG_MODEL should be in alternatives.
+    assert "ESCALATE_MODEL" in d.rationale
+    # The original (rejected) ESCALATE_MODEL should be in alternatives.
     alt_names = {alt[0] for alt in d.alternatives_considered}
-    assert "STRONG_MODEL" in alt_names
+    assert "ESCALATE_MODEL" in alt_names
 
 
 def test_budget_high_for_default_is_no_downgrade() -> None:
-    """DEFAULT is cheap ($0.05); $1 budget is plenty."""
+    """BASELINE is cheap ($0.05); $1 budget is plenty."""
     d = pick_episode_config(
         "foo",
         _state(budget_remaining_usd=1.0),  # plenty for default
     )
-    assert d.config_name == "DEFAULT"
+    assert d.config_name == "BASELINE"
     assert "DOWNGRADED" not in d.rationale
 
 
@@ -265,15 +265,15 @@ def test_plan_iter_routes_each_task_independently() -> None:
     """Different per-task histories should yield different configs."""
     state = _state(
         recent_rewards={
-            "fresh": [],            # → DEFAULT
-            "near": [0.3],          # → STRONG_MODEL
-            "stuck": [0.0, 0.0, 0.0],  # → PROFILING_DIAGNOSIS
+            "fresh": [],            # → BASELINE
+            "near": [0.3],          # → ESCALATE_MODEL
+            "stuck": [0.0, 0.0, 0.0],  # → DIAGNOSE_PROFILING
         }
     )
     plan = plan_iter(["fresh", "near", "stuck"], state)
-    assert plan["fresh"].config_name == "DEFAULT"
-    assert plan["near"].config_name == "STRONG_MODEL"
-    assert plan["stuck"].config_name == "PROFILING_DIAGNOSIS"
+    assert plan["fresh"].config_name == "BASELINE"
+    assert plan["near"].config_name == "ESCALATE_MODEL"
+    assert plan["stuck"].config_name == "DIAGNOSE_PROFILING"
 
 
 # ---------------------------------------------------------------------------
@@ -284,16 +284,16 @@ def test_plan_iter_routes_each_task_independently() -> None:
 def test_summarize_plan_counts_by_config_name() -> None:
     state = _state(
         recent_rewards={
-            "a": [], "b": [],         # both DEFAULT
-            "c": [0.3],               # STRONG_MODEL
-            "d": [0.0, 0.0, 0.0],     # PROFILING_DIAGNOSIS
+            "a": [], "b": [],         # both BASELINE
+            "c": [0.3],               # ESCALATE_MODEL
+            "d": [0.0, 0.0, 0.0],     # DIAGNOSE_PROFILING
         }
     )
     plan = plan_iter(["a", "b", "c", "d"], state)
     counts = summarize_plan(plan)
-    assert counts["DEFAULT"] == 2
-    assert counts["STRONG_MODEL"] == 1
-    assert counts["PROFILING_DIAGNOSIS"] == 1
+    assert counts["BASELINE"] == 2
+    assert counts["ESCALATE_MODEL"] == 1
+    assert counts["DIAGNOSE_PROFILING"] == 1
     # Sum equals total tasks
     assert sum(counts.values()) == 4
 
@@ -321,18 +321,18 @@ def test_every_menu_entry_is_unique_episode_config() -> None:
 def test_menu_includes_all_documented_configs() -> None:
     """SKILL.md promises these configs exist. Pin against drift."""
     required = {
-        "DEFAULT", "EXPLORATORY_BREADTH", "STRONG_MODEL",
-        "REFINER_ENABLED", "RETEST_PROMOTION", "PROFILING_DIAGNOSIS",
-        "LONG_BUILD_TASK", "SCAFFOLDING_DIAGNOSIS",
+        "BASELINE", "WIDEN_SEARCH", "ESCALATE_MODEL",
+        "ENABLE_REFINER", "RETEST_PROMOTION", "DIAGNOSE_PROFILING",
+        "EXTEND_TIMEOUT", "DIAGNOSE_SCAFFOLDING",
     }
     assert required.issubset(EPISODE_CONFIG_MENU.keys())
 
 
 def test_default_config_is_zero_cost_baseline() -> None:
-    """DEFAULT must be the cheapest baseline — no fancy knobs flipped."""
-    assert DEFAULT.k_candidates == 1
-    assert DEFAULT.k_plans == 1
-    assert DEFAULT.perturbations == ()
-    assert DEFAULT.enable_refiner is False
-    assert DEFAULT.apply_promotion is False
-    assert DEFAULT.investigator_recipe is None
+    """BASELINE must be the cheapest baseline — no fancy knobs flipped."""
+    assert BASELINE.k_candidates == 1
+    assert BASELINE.k_plans == 1
+    assert BASELINE.perturbations == ()
+    assert BASELINE.enable_refiner is False
+    assert BASELINE.apply_promotion is False
+    assert BASELINE.investigator_recipe is None
