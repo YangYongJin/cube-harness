@@ -207,7 +207,6 @@ def run_once(
     eai_profile: str = "yul101",
     eai_path: str = "eai",
     launch_timeout: int = 900,
-    orphan_threshold_s: float | None = None,
     run_label: str = "",
     debug: bool = False,
     retry_dir: Path | None = None,
@@ -239,11 +238,7 @@ def run_once(
     if debug:
         run_sequentially(exp)
         return exp.output_dir, ExpResult(exp_id=exp.name, tasks_num=0)
-    # orphan_threshold_s bounds how long a task may sit QUEUED before it's cancelled
-    # as unschedulable. The 1h default false-positives on large queues (tasks >> workers)
-    # where tasks legitimately wait behind slow ones — raise it for big subsets like lite.
-    extra = {} if orphan_threshold_s is None else {"orphan_threshold_s": orphan_threshold_s}
-    return exp.output_dir, run_with_ray(exp, n_cpus=n_parallel, **extra)
+    return exp.output_dir, run_with_ray(exp, n_cpus=n_parallel)
 
 
 # ---------------------------------------------------------------------------
@@ -334,14 +329,6 @@ if __name__ == "__main__":
     parser.add_argument("--dump-solvable", metavar="PATH", default=None)
     parser.add_argument("--n-parallel", type=int, default=50)
     parser.add_argument("--launch-timeout", type=int, default=900)
-    parser.add_argument(
-        "--orphan-threshold",
-        type=float,
-        default=None,
-        help="Seconds a task may sit QUEUED before being cancelled as unschedulable "
-        "(Ray default 3600). Raise for large subsets (tasks >> workers) where tasks "
-        "legitimately wait behind slow ones — e.g. 21600 for --subset lite on Daytona.",
-    )
     parser.add_argument("--toolkit", action="store_true", help="Run on the EAI Toolkit (non-root uid).")
     parser.add_argument(
         "--daytona",
@@ -373,7 +360,6 @@ if __name__ == "__main__":
         debug=args.debug,
         n_parallel=args.n_parallel,
         launch_timeout=args.launch_timeout,
-        orphan_threshold_s=args.orphan_threshold,
         toolkit=args.toolkit,
         daytona=args.daytona,
         eai_profile=args.eai_profile,
