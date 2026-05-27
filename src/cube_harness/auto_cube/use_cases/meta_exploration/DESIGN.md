@@ -301,9 +301,140 @@ L1 dispatch and the planner.
 - Recipe router: [`../../../meta_exploration/recipe_router.py`](../../../meta_exploration/recipe_router.py)
 - Promotion gate: [`../../../meta_exploration/promotion.py`](../../../meta_exploration/promotion.py)
 - EpisodeConfig planner: [`../../../meta_exploration/planner.py`](../../../meta_exploration/planner.py)
-- AutoCubeOptions (Pivot 5): TBD
-- Outer-loop SDK driver (Pivot 7): TBD
+- AutoCubeOptions: [`../../../meta_exploration/options.py`](../../../meta_exploration/options.py) — will move to `../../options.py` per HANDOFF.md refactor
+- Outer-loop driver: [`../../../meta_exploration/outer_loop_driver.py`](../../../meta_exploration/outer_loop_driver.py) — will move to `../../orchestrator.py` per HANDOFF.md refactor
 - Companion `hinter` use case: [`../hinter/SKILL.md`](../hinter/SKILL.md)
 - Auto-CUBE README: [`../../README.md`](../../README.md)
 - Meta-Harness paper: [arXiv 2603.28052](https://arxiv.org/abs/2603.28052)
 - Meta-Harness codebase reference: [stanford-iris-lab/meta-harness](https://github.com/stanford-iris-lab/meta-harness)
+
+---
+
+## §9. Mechanical knobs vs textual notes — both as options
+
+Update 2026-05-27: there are TWO complementary channels meta-exploration
+can use to intervene. We support both as independently-togglable options
+on ``AutoCubeOptions`` so we can ablate which channel actually matters.
+
+### Channel 1 — mechanical knobs (the original design)
+
+Fields on ``EpisodeConfig`` mechanically force the agent to behave
+differently:
+
+- ``model``, ``bash_default_timeout``, ``investigator_recipe``,
+  ``apply_promotion`` — directly supported by upstream
+  ``GennyConfig`` / ``TerminalToolConfig``; **no porting needed**.
+- ``k_candidates``, ``k_plans``, ``perturbations``, ``enable_refiner``
+  — implemented by PGEPA's modules
+  (``pgepa_v2/agent/k_candidate.py``, ``plan_candidate.py``,
+  ``perturbations/``, ``agent/refiner.py``); **requires porting into**
+  ``meta_exploration/`` or as upstream RFC.
+
+**Pro:** strong guarantee — the agent IS forced to explore differently
+(no way for it to "skip" a perturbation).
+**Con:** algorithm-porting cost (~half a day per module × 4 modules);
+tight coupling between meta_exploration and Genny internals.
+
+### Channel 2 — textual exploration notes (the lightweight alternative)
+
+Meta-exploration's policy authors short text strings ("exploration
+notes") per task, injected into the agent's prompt as a fourth
+category of hint alongside ``benchmark_hint_prompt`` /
+``task_clarification`` / ``task_hints``.
+
+Examples:
+- ``"This task has timed out twice — consider running pip install with
+  longer timeouts."``
+- ``"On the prior attempt the agent used ArrowUp on a slider with 50
+  steps to go — consider PageUp/PageDown for big gaps."``
+- ``"This task class has had recurring issues with file-path
+  case-sensitivity — verify exact casing before edits."``
+
+Storage: ``HintLedgerEntry.notes["exploration_notes"]`` per task. The
+orchestrator injects them into the agent prompt alongside other text
+hints (Stage D's authoring path is reused).
+
+**Pro:** zero algorithm porting; cleanly composes with hinter (both
+are text authors); cheap to iterate on what guidance works.
+**Con:** weak guarantee — the agent MIGHT ignore the note; the
+intervention is a *prompt change* not a *behavior change*.
+
+### Both-as-options
+
+New ``AutoCubeOptions`` fields:
+
+- ``enable_mechanical_exploration_knobs: bool = True`` — when True, the
+  planner's menu includes ``WIDEN_SEARCH`` (k_candidates=3 +
+  perturbations) and ``ENABLE_REFINER`` (refiner=True). When False,
+  those mechanical-only entries are filtered out (same pattern as
+  ``allow_model_escalation``).
+- ``enable_exploration_notes: bool = False`` — when True, the planner
+  ALSO authors a textual ``exploration_note`` per task per iter (in
+  addition to picking a config). The orchestrator injects these into
+  the agent's prompt next iter.
+
+Ablation table (extends DESIGN.md §2):
+
+| Recipe variant | mechanical | notes | What it isolates |
+|---|---|---|---|
+| `meta_exploration_only` (current) | True | False | Original framing — mechanical channel only |
+| `meta_exploration_notes_only` (NEW) | False | True | Lightweight text channel only |
+| `meta_exploration_both` (NEW) | True | True | Overdetermined — maximum exploration signal |
+| `meta_exploration_off` (= weak_noop) | False | False | Baseline |
+
+The 2×2 sub-ablation lets us measure: does the **mechanical channel**
+add value over the **textual channel** at the same level of policy
+sophistication? If `notes_only` is competitive with `mechanical_only`,
+then C1-C4 algorithm ports become low-value work and we can ship just
+the notes channel.
+
+### Implementation order (per HANDOFF.md priority shift)
+
+Per the staged plan (pilot → seed → scaling → meta-exploration tests):
+
+1. **Pilot phase:** wire **notes channel only** (it requires no
+   porting). Stage D's text-hint authoring path is reused; planner
+   gains a "draft note for this task" output alongside its
+   ``EpisodeConfig`` pick.
+2. **Scaling-experiments phase:** if exploration is confirmed as
+   the bottleneck via uniform-config scaling sweeps, then **port the
+   mechanical channel** (C1-C4). Without confirmation, this work is
+   speculative.
+3. **Comparison phase:** run the 2×2 notes/mechanical ablation to
+   decide which channel ships in the final paper.
+
+---
+
+## §10. Open architectural questions (record for future sessions)
+
+These are not blockers — defaults are in place — but they're worth
+revisiting when scaling experiments reveal what actually matters.
+
+### Q1 — Mechanical knobs upstream vs local (was H1)
+**Current default:** local subclass (Option B) — `MetaExplorationGennyConfig`
+in `meta_exploration/`. **Trigger to revisit:** if scaling experiments
+show the mechanical knobs (k_candidates / perturbations / refiner) are
+broadly valuable across cube-harness agents, propose upstream as an
+RFC against `GennyConfig`. Alec sign-off would mark the migration.
+
+### Q2 — Held-out tier strategy (was H2)
+**Current default:** rotate per iter via `pick_held_out(seed=iter_idx)`
+(implemented in `promotion.py`). Gives more held-out task coverage
+across iters at the cost of comparability of verdicts.
+**Alternative:** pin same N tasks for the whole sweep; makes
+per-promotion verdicts directly comparable across iters but tests
+fewer distinct held-out tasks. **No change planned** unless cross-iter
+verdict comparability becomes the bottleneck.
+
+### Q3 — When to surface RFCs upstream (was H3)
+**Current:** deferred. To be discussed with Alec when scaling
+experiments inform what's most-broadly-useful. Two candidates:
+- The mechanical-knob extension to `GennyConfig` (Q1)
+- The `outer_loop_driver` → `auto_cube/orchestrator.py` move (it's
+  a general primitive, not meta-exploration-specific — see HANDOFF.md
+  §3 refactor item)
+
+### Q4 — Mechanical vs textual exploration channel (NEW, §9)
+**Current default:** ship the notes channel first (low cost; covers
+the pilot phase). Mechanical channel deferred until scaling
+experiments confirm exploration is the bottleneck.

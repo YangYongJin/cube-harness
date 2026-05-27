@@ -104,146 +104,185 @@ See [`DESIGN.md`](DESIGN.md) §1 + §2 for the full framing.
 
 ## §3. What's remaining (in priority order)
 
-### Tier 1 — load-bearing for any sweep to actually run
+**Staged plan** (updated 2026-05-27): we're NOT going straight at the
+6-cell paper-grade ablation. Order is:
 
-These 3 stages are stubbed in `outer_loop_driver.py` with explicit
-`§Contract` docstrings. Each one is ~3-5 hrs.
+1. **Pilot tests** — minimum-viable end-to-end (Stage B + smoke); does
+   the architecture work?
+2. **Few-seed tests** — multi-seed runs to establish noise floor
+3. **Scaling experiments** — *the load-bearing scientific question:
+   is exploration actually the bottleneck?* If uniform extra compute
+   on more episodes / longer rollouts doesn't help, then
+   meta-exploration won't help either and the meta-exploration work
+   is speculative.
+4. **Meta-exploration tests** — only after #3 confirms exploration is
+   the bottleneck.
 
-#### 1. **Stage B episode runner** — make the driver actually launch
-   episodes through cube-harness's `Experiment` / `exp_runner`.
+This shifts what's Tier 1 vs Tier 2 vs Tier 3.
 
-   File: [`outer_loop_driver.py:stage_b_launch_episode`](../../../meta_exploration/outer_loop_driver.py)
-   Currently: takes a `runner=` callable; default raises `NotImplementedError`.
-   Needed: a default runner that translates `EpisodeConfig` →
-   `GennyConfig` (+ `LLMConfig`, perturbations, etc.) and launches one
-   episode via `Experiment(benchmark_config=..., agent_config=...).run()`.
+### Tier 1 — load-bearing for the pilot phase
 
-   Sticky bits:
-   - `EpisodeConfig.perturbations` is a tuple of strings — needs a
-     registry mapping names to actual perturbation modules.
-     PGEPA's `src/pgepa_v2/perturbations/` is the reference; needs
-     porting into cube-harness or wired as a separate registry.
-   - `EpisodeConfig.enable_refiner` needs PGEPA's refiner module
-     similarly ported.
-   - `bash_default_timeout` needs to be threaded into
-     `cube.tools.terminal.TerminalToolConfig` for TB-style cubes.
+#### 1. **Architectural refactor — move orchestrator + options to `auto_cube/`** (~1.5 hrs)
+   - `meta_exploration/outer_loop_driver.py` → `auto_cube/orchestrator.py`
+     (it's not meta-exploration-specific; debug + hinter can use it too)
+   - `meta_exploration/options.py` → `auto_cube/options.py` (same — universal)
+   - Only `planner.py` stays in `meta_exploration/` — that's the actual
+     meta-exploration contribution
+   - Update imports + tests + this HANDOFF doc + DESIGN.md
+   - **Do early** — every follow-up file lands in the right home then.
 
-#### 2. **Stage C — Investigator dispatch via cube_harness SDK**
+#### 2. **MetaExplorationGennyConfig subclass** (Option B — see DESIGN.md §10 Q1) (~30 min)
+   - File: `meta_exploration/agent_config.py` (new)
+   - Pure data extension over upstream `GennyConfig`. Adds:
+     `k_candidates: int = 1`, `k_plans: int = 1`,
+     `enable_refiner: bool = False`, `perturbations: list[str] = []`
+   - **DISCIPLINE PIN:** no method overrides — pinned via a comment AND
+     a test asserting `set(MetaExplorationGennyConfig.__dict__).difference(set(GennyConfig.__dict__)) == {set of field names}`.
+     This keeps the B→A migration trivial (~5 min) if Alec eventually
+     accepts the upstream RFC.
 
-   File: [`outer_loop_driver.py:stage_c_dispatch_investigator`](../../../meta_exploration/outer_loop_driver.py)
-   Contract: per trajectory, pick a recipe (via `recipe_router` or
-   planner override) and invoke the matching
-   `cube_harness.analyze.investigator.use_cases.<recipe>.recipe`
-   (which uses `claude_agent_sdk` internally per the `investigator`
-   optional dep).
+#### 3. **Stage B episode runner — minimum viable** (~2-3 hrs)
+   - File: `outer_loop_driver.py:stage_b_launch_episode` (or wherever
+     after refactor)
+   - Translate `EpisodeConfig` → `MetaExplorationGennyConfig` (use
+     the subclass; mechanical fields just pass through) →
+     `Experiment(benchmark_config=, agent_config=).run()`.
+   - **Minimum viable:** only need `model`, `bash_default_timeout`,
+     `investigator_recipe`, `apply_promotion` translation. The
+     `k_candidates` / `k_plans` / `perturbations` / `enable_refiner`
+     fields can stay no-op until Stage B v2 (Tier 3 if needed).
+   - The honest-split assertion already fires (committed in v1).
 
-   Verify before wiring: that upstream's investigator module exposes
-   a callable interface (not just a `recipe.py` with constants).
-   `cube_harness/analyze/investigator/use_cases/hinter/recipe.py` has
-   `RECIPE = InvestigatorRecipe(...)` — needs a dispatch function that
-   takes a trajectory + recipe and returns `BaseFindings`.
+#### 4. **Plan.json writer + minimal Stage F polish** (~30 min)
+   - End of each iter: dump `dict[task_id, PlannerDecision]` to
+     `output_dir/iter_<k>/plan.json`. Already designed; just needs
+     code in `orchestrator.py`. Critical for debugging the pilot runs.
 
-#### 3. **Stage D — text-hint authoring + Meta-Harness branches**
+#### 5. **Smoke runs** (~$2-5, half hour wall)
+   - `weak_noop` and `combined` on 3-5 tasks, 1 iter, TB-2
+   - Confirms end-to-end plumbing of A + B + F + the honest-gate
+     assertion.
 
-   File: [`outer_loop_driver.py:stage_d_author_hints`](../../../meta_exploration/outer_loop_driver.py)
-   Two paths:
-   - Vanilla: aggregate `task_hints[]` from Stage C findings; mutate
+### Tier 2 — scaling experiments (the load-bearing scientific question)
+
+#### 6. **Uniform-config scaling sweep** (~$20-50, depending on scope)
+   - Goal: answer "is exploration the bottleneck?"
+   - Hold config fixed (e.g. `weak_noop` recipe); vary compute via
+     `experiences_per_task` (1 / 3 / 5 / 10) and `max_steps`
+     (100 / 200 / 400) — both knobs already in cube-harness's
+     `Experiment` config.
+   - Measure: per-task win-rate as a function of compute budget.
+   - **Decision criterion for meta-exploration**:
+     - If win-rate plateaus quickly (e.g. no improvement from 3→10
+       replicas) → exploration ISN'T the bottleneck → meta-exploration
+       deprioritized; investigate hint quality (Tier 4) instead.
+     - If win-rate keeps improving with more replicas/steps → exploration
+       IS the bottleneck → proceed to Tier 3 meta-exploration tests.
+
+#### 7. **Few-seed runs of the same scaling sweep** (~$50-100)
+   - 3-5 seeds to bracket the noise band.
+   - Same axes (replicas / max_steps) but with seed variance.
+   - Outputs the actual signal-to-noise ratio meta-exploration needs
+     to beat.
+
+### Tier 3 — meta-exploration tests (conditional on Tier 2 outcome)
+
+#### 8. **Investigator-emitted ledger notes** (~2-3 hrs)
+   - File: `outer_loop_driver.py:stage_c_dispatch_investigator`
+   - Wire to `cube_harness.analyze.investigator` (verify the
+     callable interface first per Stage C contract docstring).
+   - Populate ledger notes (`loop_pattern_suspected`,
+     `build_timeout_suspected`) from trajectory analysis.
+   - Without this, the planner's notes-based rules (5a, 5b) never fire.
+
+#### 9. **Stage D vanilla — text-hint authoring + exploration notes** (~3-4 hrs)
+   - File: `outer_loop_driver.py:stage_d_author_hints`
+   - Aggregate text-hint candidates from Stage C findings; mutate
      `GennyConfig.task_hints`.
-   - Meta-Harness: if `opts.propose_multiple_harnesses=True`, do step
-     K times and pick best by validation reward; if
-     `opts.enable_pareto_verify=True`, gate the mutation on Pareto
-     improvement over per-task rewards.
+   - **NEW: also author exploration notes** (DESIGN.md §9) when
+     `opts.enable_exploration_notes=True`. Lightweight text channel
+     for meta-exploration that avoids the algorithm-port cost.
+   - Both kinds of text flow into the agent's prompt via the same
+     hint-injection mechanism.
 
-   Reference for the Meta-Harness algorithm: arXiv 2603.28052 +
-   [stanford-iris-lab/meta-harness](https://github.com/stanford-iris-lab/meta-harness).
+#### 10. **Stage E — Phase 2 promotion + re-test gate** (~4 hrs)
+   - File: `outer_loop_driver.py:stage_e_phase2_promotion`
+   - Detect candidates via
+     `promotion.candidate_from_task_hints_overlap` (text path);
+     similar function for config-knob candidates if needed.
+   - Run re-test sub-experiment on (affected + held-out) tasks.
+   - The honest-split assertion fires inside Stage B during the
+     re-test episodes.
 
-#### 4. **Stage E — Phase 2 promotion + re-test gate**
+#### 11. **Algorithm ports — CONDITIONAL on Tier 2 outcome + DESIGN.md §9 ablation** (~half-day each)
+   - **C1** Port `pgepa-v2/src/pgepa_v2/agent/k_candidate.py`
+   - **C2** Port `pgepa-v2/src/pgepa_v2/agent/plan_candidate.py`
+   - **C3** Port `pgepa-v2/src/pgepa_v2/perturbations/`
+   - **C4** Port `pgepa-v2/src/pgepa_v2/agent/refiner.py`
+   - **Only do these if:** scaling experiments confirm exploration is
+     the bottleneck AND DESIGN.md §9 ablation shows the mechanical
+     channel beats the notes channel.
+   - If notes channel alone is competitive → skip C1-C4 entirely.
 
-   File: [`outer_loop_driver.py:stage_e_phase2_promotion`](../../../meta_exploration/outer_loop_driver.py)
-   Contract: detect candidates (text via
-   `promotion.candidate_from_task_hints_overlap`; config via a sibling
-   `candidate_from_episode_config_overlap` that needs to be written);
-   per candidate, run a sub-experiment on (affected + held-out)
-   tasks; verdict via `promotion.decide_verdict`; mutate ledger
-   disposition accordingly.
+#### 12. **Promotion-rung extensions** (~1-2 hrs each)
+   - **E1** Extend `promotion.apply_promotion_to_config` to handle
+     `task_clarification` rung
+   - **E2** Extend it to handle `description_overrides` rung
+   - `new_action` + `system_prompt` stay Mode-C-only per design.
 
-   The honest-split assertion fires inside Stage B during the re-test
-   episodes — no extra work needed beyond ensuring re-test episodes
-   set `EpisodeConfig.model = opts.inference_model`.
+### Tier 4 — paper-grade ablation (only if Tier 3 produces a signal)
 
-### Tier 2 — observability + ergonomics
+#### 13. **Meta-Harness branches in Stage D** (~4-6 hrs)
+   - `enable_pareto_verify` — gate hint mutations on per-task Pareto improvement
+   - `propose_multiple_harnesses` — propose K candidate hint sets, pick best
+   - Reference: arXiv 2603.28052 + stanford-iris-lab/meta-harness
 
-#### 5. **Plan.json writer** — at end of each iter, serialize the
-   `PlannerDecision` per task to `output_dir/iter_<k>/plan.json`.
-   Already named in `DESIGN.md`; just needs to be written. ~30 min.
+#### 14. **Typer CLI entry point** (~1 hr)
+   - `python -m cube_harness.auto_cube.orchestrator --recipe combined ...`
+   - Thin wrapper following `scripts/experiments_report.py` conventions.
 
-#### 6. **CLI entry point** — `python -m
-   cube_harness.meta_exploration.outer_loop_driver --recipe combined
-   --benchmark terminalbench2 ...`. The driver's `run_outer_loop`
-   takes positional args; the CLI is a thin Typer wrapper following
-   cube-harness's existing CLI conventions
-   ([`scripts/experiments_report.py`](../../../../scripts/experiments_report.py)
-   is the canonical example). ~1 hr.
-
-#### 7. **Smoke runs against real TB-2 cube** — once Stages B/C/D/E
-   land, run `weak_noop` and `combined` on a small subset
-   (3-5 tasks, 1 iter) to confirm end-to-end plumbing.
-
-### Tier 3 — paper-grade ablation
-
-#### 8. **Full 6-cell sweep** on TB-2 (or MW or both). Plan:
-   - 16 train + 16 held-out tasks per benchmark
-   - 3 iters per recipe
-   - 2 seeds per cell (for noise band)
-   - 6 recipes × 32 tasks × 3 iters × 2 seeds = ~1100 episodes
-   - At $0.10 per episode (mid estimate): **~$110 budget**
-   - Wall: 3-6 hours per cell × 6 cells = potentially overnight
+#### 15. **Full 6-cell ablation sweep** (~$100-150, overnight)
+   - 6 recipes × 16+16 tasks × 3 iters × 2 seeds = ~1100 episodes
    - Output: 6-cell table with mean ± SD wins, total $, $/win, time
+   - **Add the 2×2 notes/mechanical sub-ablation** from DESIGN.md §9
+     if both channels were implemented in Tier 3.
 
 ---
 
-## §4. Open design questions for the next session
+## §4. Open design questions — answered (record for future sessions)
 
-### 1. Where do the perturbations + refiner modules live?
+### Q1 — Where do the algorithm modules live? (formerly H1)
+**Decision (2026-05-27):** Option B — port locally into
+`meta_exploration/` (not upstream). Trigger to revisit: if scaling
+experiments + DESIGN.md §9 ablation show the mechanical knobs are
+broadly valuable across cube-harness agents, propose upstream RFC.
+See DESIGN.md §10 Q1.
 
-PGEPA has `src/pgepa_v2/perturbations/` and `src/pgepa_v2/agent/refiner.py`.
-These need to either (a) be ported into `cube_harness/meta_exploration/`
-as part of the contribution, or (b) be PR'd upstream into a more
-appropriate location (cube-harness's `agents/` for refiner; new
-top-level `perturbations/` for the others). Alec's call.
+### Q2 — Held-out tier rotation strategy (formerly H2)
+**Decision (2026-05-27):** Sweep by each iter — keep
+`pick_held_out(seed=iter_idx)` as the default (already implemented
+in `promotion.py`). Gives more held-out task coverage at the cost
+of per-iter verdict comparability. No change needed.
+See DESIGN.md §10 Q2.
 
-### 2. How does `EpisodeConfig → GennyConfig` translation work?
+### Q3 — When to surface upstream RFCs to Alec (formerly H3)
+**Deferred:** to be discussed with Alec async; tentative timing is
+after scaling experiments inform what's most-broadly-useful.
+See DESIGN.md §10 Q3.
 
-The driver's Stage B needs to build a `GennyConfig` per episode that
-reflects the planner's `EpisodeConfig`. Some mappings are direct
-(`model` → `LLMConfig.model_name`), some need wiring
-(`k_candidates` → PGEPA's `PgepaGennyConfig.k_candidates`, which
-doesn't exist yet in cube-harness's `GennyConfig`).
+### Q4 — Mechanical knobs vs textual exploration notes (NEW 2026-05-27)
+**Decision:** ship BOTH as independently-togglable options on
+`AutoCubeOptions`. Pilot phase wires the **notes channel only**
+(zero algorithm-porting cost); mechanical channel deferred until
+scaling experiments confirm exploration is the bottleneck. The
+DESIGN.md §9 2×2 sub-ablation tells us which channel ships in the
+paper. See DESIGN.md §9 + §10 Q4.
 
-Two options:
-- (a) Extend upstream `GennyConfig` with `k_candidates` /
-  `k_plans` / `enable_refiner` / `perturbations` fields — needs Alec
-  RFC since `GennyConfig` is core.
-- (b) Subclass `GennyConfig` inside `meta_exploration/` as
-  `MetaExplorationGennyConfig`, like PGEPA's `PgepaGennyConfig`.
-  Lighter touch, doesn't require Alec sign-off.
-
-### 3. Should Investigator-derived notes (`loop_pattern_suspected`,
-`build_timeout_suspected`) be code-emitted or hand-flagged?
-
-Currently the planner's decision tree reads these notes from the
-ledger but nothing populates them. Two options:
-- (a) Add a pass that walks each iter's trajectories, computes loop
-  detection + timeout detection from the trace, and writes to the
-  ledger. Pure-function over trajectory data.
-- (b) Make the Investigator do this as part of Stage C dispatch.
-  Cleaner architecturally but ties planner to Stage C being wired.
-
-### 4. Held-out tier — same set every iter or rotated?
-
-`promotion.pick_held_out` is seeded by iter index → varies across
-iters. Is that what we want? Alternative: pin the held-out set for
-the whole sweep so verdicts are comparable across iters.
+### Inline TODOs (low-priority, easy to forget)
+- Audit `recipe_router.py`'s heuristic thresholds against the actual
+  signals in upstream `analyze/investigator/use_cases/agent_scaffolding/SKILL.md`
+  (currently my guesses: `_MIN_REPEAT_FOR_SCAFFOLDING = 3`,
+  `_HIGH_TOKENS_PER_STEP = 50_000`)
 
 ---
 
