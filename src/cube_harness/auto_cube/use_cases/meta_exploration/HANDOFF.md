@@ -3,10 +3,10 @@
 **Status:** branch in good shape, foundational architecture landed,
 specific algorithm wiring remaining. Read this top-to-bottom to pick up.
 
-**Date of handoff:** 2026-05-27 (refreshed after Tier 1 #1 + #2)
+**Date of handoff:** 2026-05-27 (refreshed after Tier 1 #1 + #2 + #3)
 **Branch:** `feat/meta-exploration` on `YangYongJin/cube-harness` (fork
 of `The-AI-Alliance/cube-harness`)
-**Tests:** 1075 passed, 7 skipped, 14 deselected — clean baseline.
+**Tests:** 1089 passed, 7 skipped, 14 deselected — clean baseline.
 
 ---
 
@@ -63,10 +63,10 @@ tests/test_auto_cube_{options,python_driver}.py
 | planner (`meta_exploration/`) | 22 | ✅ |
 | agent_config (`meta_exploration/`) | 7 | ✅ |
 | options (`auto_cube/`) | 25 | ✅ |
-| python_driver (`auto_cube/`) | 18 | ✅ |
-| **Total new** | **139** | ✅ |
+| python_driver (`auto_cube/`) | 32 | ✅ |
+| **Total new** | **153** | ✅ |
 | Pre-existing cube-harness baseline | 936 | ✅ |
-| **Grand total** | **1075** | ✅ |
+| **Grand total** | **1089** | ✅ |
 
 ---
 
@@ -160,16 +160,31 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
    - Module + test docstrings carry the "do not add methods here"
      instruction so future contributors see it before adding code.
 
-#### 3. **Stage B episode runner — minimum viable** (~2-3 hrs)
-   - File: `auto_cube/python_driver.py:stage_b_launch_episode`
-   - Translate `EpisodeConfig` → `MetaExplorationGennyConfig` (use
-     the subclass; mechanical fields just pass through) →
-     `Experiment(benchmark_config=, agent_config=).run()`.
-   - **Minimum viable:** only need `model`, `bash_default_timeout`,
-     `investigator_recipe`, `apply_promotion` translation. The
-     `k_candidates` / `k_plans` / `perturbations` / `enable_refiner`
-     fields can stay no-op until Stage B v2 (Tier 3 if needed).
-   - The honest-split assertion already fires (committed in v1).
+#### 3. ✅ **DONE (2026-05-27)** Stage B episode runner — minimum viable
+   - New translator [`episode_config_to_agent_config`](../../python_driver.py)
+     in `auto_cube/python_driver.py` — applies the agent-side fields of
+     an `EpisodeConfig` to a base `MetaExplorationGennyConfig` via
+     `model_copy`. Threads `model` into `llm_config.model_name`; passes
+     the four mechanical knobs through (no-op runtime until C1–C4 ports).
+   - `stage_b_launch_episode` gained an optional `base_agent_config`
+     parameter. When provided, runner contract is **3-arg**:
+     `runner(task_id, agent_config, episode_config) -> reward`. When
+     absent, falls back to the legacy 2-arg contract (kept for stub
+     tests). The honest-split assertion still fires first, regardless
+     of which path.
+   - `run_outer_loop` plumbs `base_agent_config` through to stage_b.
+   - **Documented non-translations** (intentional gaps surfaced in
+     docstrings + tests):
+     - `bash_default_timeout` — cube-standard's `TerminalToolConfig`
+       only exposes `max_timeout` (a ceiling), not a default. Wiring
+       requires an upstream RFC. Tracked as inline TODO.
+     - `investigator_recipe` — consumed by Stage C (recipe_router), not
+       agent_config.
+     - `apply_promotion` — consumed by the honest-split assertion
+       + Stage E.
+   - 14 new tests (translator: per-menu-entry table + base immutability
+     + non-mutation invariants + unrelated-field preservation. stage_b
+     3-arg path + 2-arg backwards-compat + honest-split-still-fires).
 
 #### 4. **Plan.json writer + minimal Stage F polish** (~30 min)
    - End of each iter: dump `dict[task_id, PlannerDecision]` to

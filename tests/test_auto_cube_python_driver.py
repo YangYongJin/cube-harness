@@ -15,6 +15,7 @@ from cube_harness.auto_cube.options import (
     IncoherentOptionsError,
 )
 from cube_harness.auto_cube.python_driver import (
+    episode_config_to_agent_config,
     make_session_id,
     run_outer_loop,
     stage_a_plan_iter,
@@ -24,7 +25,27 @@ from cube_harness.auto_cube.python_driver import (
     stage_e_phase2_promotion,
     stage_f_write_ledger,
 )
-from cube_harness.meta_exploration.planner import BASELINE, EpisodeConfig, PlannerDecision
+from cube_harness.llm import LLMConfig
+from cube_harness.meta_exploration.agent_config import MetaExplorationGennyConfig
+from cube_harness.meta_exploration.planner import (
+    BASELINE,
+    DIAGNOSE_PROFILING,
+    DIAGNOSE_SCAFFOLDING,
+    ENABLE_REFINER,
+    EPISODE_CONFIG_MENU,
+    ESCALATE_MODEL,
+    EXTEND_TIMEOUT,
+    RETEST_PROMOTION,
+    WIDEN_SEARCH,
+    EpisodeConfig,
+    PlannerDecision,
+)
+
+
+def _base_agent_config(model: str = "azure/gpt-5-mini") -> MetaExplorationGennyConfig:
+    """Smallest valid base config for translator tests — no mechanical
+    knobs set, so the translator's effect is visible per-field."""
+    return MetaExplorationGennyConfig(llm_config=LLMConfig(model_name=model))
 
 
 @pytest.fixture
@@ -359,3 +380,248 @@ def test_run_outer_loop_records_session_in_ledger(isolated_ledger, tmp_path) -> 
 
     ledger = load_ledger()
     assert ledger["cube|x"].last_session == result.session_id
+
+
+# ---------------------------------------------------------------------------
+# episode_config_to_agent_config — the EpisodeConfig → agent-config translator
+# ---------------------------------------------------------------------------
+
+
+def test_translator_baseline_is_identity_modulo_model_copy() -> None:
+    """BASELINE has the EpisodeConfig defaults, so the translation should
+    produce a config that agrees with the base on every observable field."""
+    base = _base_agent_config(model="azure/gpt-5-mini")
+    out = episode_config_to_agent_config(episode_config=BASELINE, base_agent_config=base)
+    assert out.llm_config.model_name == "azure/gpt-5-mini"
+    assert out.k_candidates == 1
+    assert out.k_plans == 1
+    assert out.perturbations == []
+    assert out.enable_refiner is False
+
+
+def test_translator_returns_a_new_instance_does_not_mutate_base() -> None:
+    """``model_copy`` semantics: the translator must NOT mutate the base
+    config — that would silently entangle iters/tasks via shared state."""
+    base = _base_agent_config()
+    out = episode_config_to_agent_config(episode_config=ESCALATE_MODEL, base_agent_config=base)
+    assert out is not base
+    assert out.llm_config is not base.llm_config
+    # Base still at gpt-5-mini even though out is gpt-5.
+    assert base.llm_config.model_name == "azure/gpt-5-mini"
+    assert out.llm_config.model_name == "azure/gpt-5"
+
+
+def test_translator_escalate_model_threads_into_llm_config() -> None:
+    base = _base_agent_config(model="azure/gpt-5-mini")
+    out = episode_config_to_agent_config(episode_config=ESCALATE_MODEL, base_agent_config=base)
+    assert out.llm_config.model_name == "azure/gpt-5"
+
+
+def test_translator_widen_search_applies_k_candidates_and_perturbations() -> None:
+    base = _base_agent_config()
+    out = episode_config_to_agent_config(episode_config=WIDEN_SEARCH, base_agent_config=base)
+    assert out.k_candidates == 3
+    assert out.perturbations == ["topk_branch"]
+    # WIDEN_SEARCH doesn't touch the model.
+    assert out.llm_config.model_name == "azure/gpt-5-mini"
+
+
+def test_translator_enable_refiner_flips_the_flag() -> None:
+    base = _base_agent_config()
+    out = episode_config_to_agent_config(episode_config=ENABLE_REFINER, base_agent_config=base)
+    assert out.enable_refiner is True
+
+
+def test_translator_extend_timeout_does_not_touch_agent_config() -> None:
+    """``bash_default_timeout`` belongs on the benchmark side. The
+    translator MUST NOT silently swallow it into agent_config (would be
+    a wrong/lossy mapping). This test pins the explicit non-translation —
+    if/when an upstream RFC adds a benchmark-side hook, the wiring lives
+    in a separate function, not this one."""
+    base = _base_agent_config()
+    out = episode_config_to_agent_config(episode_config=EXTEND_TIMEOUT, base_agent_config=base)
+    # Nothing on the agent config differs from BASELINE — bash_default_timeout
+    # is benchmark-side only.
+    assert out.llm_config.model_name == base.llm_config.model_name
+    assert out.k_candidates == 1
+    assert out.perturbations == []
+    assert out.enable_refiner is False
+
+
+def test_translator_retest_promotion_passes_through_without_model_change() -> None:
+    """``apply_promotion=True`` is consumed by the honest-split assertion
+    + Stage E, not by the agent config. The translator should leave the
+    model alone (it defaults to gpt-5-mini in RETEST_PROMOTION)."""
+    base = _base_agent_config(model="azure/gpt-5-mini")
+    out = episode_config_to_agent_config(episode_config=RETEST_PROMOTION, base_agent_config=base)
+    assert out.llm_config.model_name == "azure/gpt-5-mini"
+    assert out.k_candidates == 1
+
+
+def test_translator_diagnose_recipes_dont_change_agent_config() -> None:
+    """``investigator_recipe`` is a Stage C signal, not an agent_config
+    field. Picking DIAGNOSE_* should leave the agent config indistinguishable
+    from BASELINE on the translator's outputs."""
+    base = _base_agent_config()
+    for cfg in (DIAGNOSE_SCAFFOLDING, DIAGNOSE_PROFILING):
+        out = episode_config_to_agent_config(episode_config=cfg, base_agent_config=base)
+        assert out.llm_config.model_name == base.llm_config.model_name
+        assert out.k_candidates == 1
+        assert out.k_plans == 1
+        assert out.perturbations == []
+        assert out.enable_refiner is False
+
+
+def test_translator_preserves_unrelated_base_fields() -> None:
+    """The base config's other fields (task_hints, hint, flat_history,
+    etc.) must survive translation unchanged — translation only touches
+    the documented EpisodeConfig-related fields."""
+    base = MetaExplorationGennyConfig(
+        llm_config=LLMConfig(model_name="azure/gpt-5-mini"),
+        hint="custom global hint",
+        task_hints={"task_a": "task-specific tip"},
+        flat_history=True,
+    )
+    out = episode_config_to_agent_config(episode_config=ESCALATE_MODEL, base_agent_config=base)
+    assert out.hint == "custom global hint"
+    assert out.task_hints == {"task_a": "task-specific tip"}
+    assert out.flat_history is True
+
+
+def test_translator_covers_every_menu_entry_smoke() -> None:
+    """Sweep: every entry in EPISODE_CONFIG_MENU must translate without
+    raising. Future menu additions automatically join this smoke test —
+    we just want a fast assertion that no menu entry breaks the contract."""
+    base = _base_agent_config()
+    for name, cfg in EPISODE_CONFIG_MENU.items():
+        out = episode_config_to_agent_config(episode_config=cfg, base_agent_config=base)
+        assert out is not None, f"translator returned None for menu entry {name!r}"
+        assert isinstance(out, MetaExplorationGennyConfig)
+
+
+# ---------------------------------------------------------------------------
+# stage_b_launch_episode with base_agent_config — 3-arg runner contract
+# ---------------------------------------------------------------------------
+
+
+def test_stage_b_3arg_runner_receives_translated_agent_config() -> None:
+    """When ``base_agent_config`` is provided, the runner is called with
+    (task_id, translated_agent_config, episode_config). The agent_config
+    must reflect the EpisodeConfig — verifying via the model_name."""
+    opts = AutoCubeOptions(inference_model="azure/gpt-5-mini")
+    base = _base_agent_config(model="azure/gpt-5-mini")
+    decision = PlannerDecision(
+        task_id="t",
+        config_name="ESCALATE_MODEL",
+        config=ESCALATE_MODEL,
+        rationale="r",
+        alternatives_considered=(),
+        expected_information_value="",
+    )
+
+    captured: dict[str, object] = {}
+
+    def runner(task_id: str, agent_cfg: MetaExplorationGennyConfig, ep_cfg: EpisodeConfig) -> float:
+        captured["task_id"] = task_id
+        captured["agent_cfg"] = agent_cfg
+        captured["ep_cfg"] = ep_cfg
+        return 0.75
+
+    reward = stage_b_launch_episode(
+        opts=opts,
+        task_id="t",
+        decision=decision,
+        benchmark_config=None,
+        base_agent_config=base,
+        runner=runner,
+    )
+    assert reward == 0.75
+    assert captured["task_id"] == "t"
+    assert captured["ep_cfg"] is ESCALATE_MODEL  # raw episode_config passed through
+    agent_cfg = captured["agent_cfg"]
+    assert isinstance(agent_cfg, MetaExplorationGennyConfig)
+    # ESCALATE_MODEL bumps the model name.
+    assert agent_cfg.llm_config.model_name == "azure/gpt-5"
+
+
+def test_stage_b_3arg_runner_still_fires_honest_split_assertion() -> None:
+    """Promotion + wrong model must raise BEFORE the runner is called,
+    same as the 2-arg path. The 3-arg path doesn't weaken the guard."""
+    opts = AutoCubeOptions(inference_model="azure/gpt-5-mini")
+    base = _base_agent_config(model="azure/gpt-5-mini")
+    bad_cfg = EpisodeConfig(model="azure/gpt-5", apply_promotion=True)
+    decision = PlannerDecision(
+        task_id="x",
+        config_name="BAD",
+        config=bad_cfg,
+        rationale="r",
+        alternatives_considered=(),
+        expected_information_value="",
+    )
+
+    def runner_should_not_be_called(task_id, agent_cfg, ep_cfg):  # noqa: ARG001
+        pytest.fail("runner invoked despite honest-split assertion failure")
+
+    with pytest.raises(IncoherentOptionsError, match="re-test gate violation"):
+        stage_b_launch_episode(
+            opts=opts,
+            task_id="x",
+            decision=decision,
+            benchmark_config=None,
+            base_agent_config=base,
+            runner=runner_should_not_be_called,
+        )
+
+
+def test_stage_b_2arg_path_is_unchanged_when_no_base_agent_config() -> None:
+    """Backwards-compat: existing callers that don't pass
+    ``base_agent_config`` still see the legacy 2-arg runner contract."""
+    opts = AutoCubeOptions()
+    decision = PlannerDecision(
+        task_id="t",
+        config_name="BASELINE",
+        config=BASELINE,
+        rationale="r",
+        alternatives_considered=(),
+        expected_information_value="",
+    )
+    captured: dict[str, object] = {}
+
+    def runner_2arg(task_id, ep_cfg):
+        captured["task_id"] = task_id
+        captured["ep_cfg"] = ep_cfg
+        return 0.42
+
+    reward = stage_b_launch_episode(
+        opts=opts,
+        task_id="t",
+        decision=decision,
+        benchmark_config=None,
+        runner=runner_2arg,
+    )
+    assert reward == 0.42
+    assert captured["ep_cfg"] is BASELINE
+
+
+def test_run_outer_loop_with_base_agent_config_threads_translation(isolated_ledger, tmp_path) -> None:
+    """End-to-end: run_outer_loop with base_agent_config calls the
+    3-arg runner per task. Smoke that the parameter plumbs through."""
+    base = _base_agent_config(model="azure/gpt-5-mini")
+    seen_model_names: list[str] = []
+
+    def runner(task_id, agent_cfg, ep_cfg):  # noqa: ARG001
+        seen_model_names.append(agent_cfg.llm_config.model_name)
+        return 1.0
+
+    result = run_outer_loop(
+        opts=META_EXPLORATION_ONLY,  # planner runs; some near-miss tasks pick ESCALATE_MODEL
+        cube="cube",
+        task_ids=["fresh"],  # fresh task → BASELINE pick → no model change
+        iterations=1,
+        benchmark_config=None,
+        output_dir=tmp_path / "r",
+        base_agent_config=base,
+        runner=runner,
+    )
+    assert result.iterations_run == 1
+    assert seen_model_names == ["azure/gpt-5-mini"]  # BASELINE inherits base model

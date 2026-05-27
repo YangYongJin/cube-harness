@@ -48,12 +48,14 @@ from cube_harness.auto_cube.options import (
     filter_menu_by_options,
     validate_options,
 )
+from cube_harness.meta_exploration.agent_config import MetaExplorationGennyConfig
 from cube_harness.meta_exploration.ledger import (
     load_ledger,
     upsert_entry,
 )
 from cube_harness.meta_exploration.planner import (
     BASELINE,
+    EpisodeConfig,
     PlannerDecision,
     PlannerState,
     plan_iter,
@@ -187,6 +189,56 @@ def stage_a_plan_iter(
 
 
 # ---------------------------------------------------------------------------
+# EpisodeConfig → MetaExplorationGennyConfig translator (Stage B input prep)
+# ---------------------------------------------------------------------------
+
+
+def episode_config_to_agent_config(
+    *,
+    episode_config: EpisodeConfig,
+    base_agent_config: MetaExplorationGennyConfig,
+) -> MetaExplorationGennyConfig:
+    """Apply the planner's ``EpisodeConfig`` to an agent-config base.
+
+    Fields that land on the agent side:
+      - ``model``           → ``base.llm_config.model_name``
+      - ``k_candidates``    → ``base.k_candidates``     (no-op runtime
+                              until C1 port — HANDOFF Tier 3)
+      - ``k_plans``         → ``base.k_plans``          (no-op until C2)
+      - ``perturbations``   → ``base.perturbations``    (no-op until C3)
+      - ``enable_refiner``  → ``base.enable_refiner``   (no-op until C4)
+
+    Fields that land elsewhere (NOT touched here):
+      - ``investigator_recipe`` → consumed by Stage C (recipe_router)
+      - ``apply_promotion``     → consumed by the honest-split
+                                  assertion + Stage E re-test gate
+      - ``bash_default_timeout`` → would belong on the benchmark's
+        ``TerminalToolConfig``, but cube-standard's
+        ``TerminalToolConfig`` only exposes ``max_timeout`` (a per-call
+        ceiling), not a default. Wiring this field requires an upstream
+        RFC against cube-standard; tracked in HANDOFF.md §4 inline TODOs.
+        Until then, picking ``EXTEND_TIMEOUT`` from the menu is a no-op
+        at runtime — the planner's *intent* is recorded in the ledger
+        even though no behavior changes.
+
+    Returns a NEW ``MetaExplorationGennyConfig`` instance (Pydantic
+    ``model_copy``) — the base is not mutated.
+    """
+    new_llm = base_agent_config.llm_config.model_copy(
+        update={"model_name": episode_config.model},
+    )
+    return base_agent_config.model_copy(
+        update={
+            "llm_config": new_llm,
+            "k_candidates": episode_config.k_candidates,
+            "k_plans": episode_config.k_plans,
+            "perturbations": list(episode_config.perturbations),
+            "enable_refiner": episode_config.enable_refiner,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Stage B — launch episodes (with honest-gate assertion)
 # ---------------------------------------------------------------------------
 
@@ -197,7 +249,8 @@ def stage_b_launch_episode(
     task_id: str,
     decision: PlannerDecision,
     benchmark_config,  # cube.benchmark.BenchmarkConfig — typed loosely
-    runner=None,  # callable(task_id, config) -> reward; injectable for tests
+    base_agent_config: MetaExplorationGennyConfig | None = None,
+    runner=None,
 ) -> float:
     """Stage B — launch one episode under the planner-picked config.
 
@@ -205,11 +258,23 @@ def stage_b_launch_episode(
     episode (``apply_promotion=True``) must use ``opts.inference_model``
     — this is the load-bearing honest-split guard from DESIGN.md §1.
 
-    The actual episode execution is delegated to ``runner`` — by
-    default this raises NotImplementedError pending wiring to
-    ``cube_harness.experiment.Experiment`` + ``exp_runner``. The
-    injectable hook makes the assertion + decision-flow testable
-    without running real LLM episodes.
+    When ``base_agent_config`` is provided, builds the translated
+    ``MetaExplorationGennyConfig`` via ``episode_config_to_agent_config``
+    and hands it to ``runner`` alongside the task id. When it's None,
+    the runner only receives the raw ``EpisodeConfig`` (legacy two-arg
+    contract — kept for the existing stub tests + the v1 outer-loop
+    skeleton). Production code should pass ``base_agent_config``.
+
+    The ``runner`` contract:
+      - 2-arg form: ``runner(task_id, episode_config) -> reward``
+        — used when ``base_agent_config`` is None.
+      - 3-arg form: ``runner(task_id, agent_config, episode_config) -> reward``
+        — used when ``base_agent_config`` is provided.
+
+    The actual episode execution is delegated to ``runner``; the default
+    is ``None`` and raises ``NotImplementedError``. A production runner
+    that wraps ``cube_harness.experiment.Experiment`` lands in a
+    follow-up (Tier 1 #5 smoke run wires it).
     """
     # THE honest-split guard. Fires before any side effect.
     assert_retest_uses_inference_model(opts, decision.config)
@@ -219,10 +284,18 @@ def stage_b_launch_episode(
             "stage_b_launch_episode: actual episode execution not yet wired. "
             "Pass `runner` callable for tests, or wait for the full driver to "
             "thread `cube_harness.experiment.Experiment` through here. "
-            "Contract: runner(task_id, episode_config) -> reward (float in [0,1])."
+            "Contract: runner(task_id, [agent_config,] episode_config) -> "
+            "reward (float in [0,1])."
         )
 
-    reward = runner(task_id, decision.config)
+    if base_agent_config is not None:
+        agent_config = episode_config_to_agent_config(
+            episode_config=decision.config,
+            base_agent_config=base_agent_config,
+        )
+        reward = runner(task_id, agent_config, decision.config)
+    else:
+        reward = runner(task_id, decision.config)
     logger.info(
         "stage_b launched task=%s config=%s reward=%.3f",
         task_id,
@@ -403,6 +476,7 @@ def run_outer_loop(
     benchmark_config,  # cube.benchmark.BenchmarkConfig
     output_dir: Path,
     session_id: str | None = None,
+    base_agent_config: MetaExplorationGennyConfig | None = None,
     runner=None,  # injectable episode runner
 ) -> MetaLoopResult:
     """The unattended outer-loop driver.
@@ -412,6 +486,12 @@ def run_outer_loop(
     them and logs a warning. Once those stages are wired, this
     function is the entry point for every named recipe in
     ``options.RUN_RECIPES``.
+
+    When ``base_agent_config`` is provided, Stage B builds the
+    translated ``MetaExplorationGennyConfig`` per episode via
+    ``episode_config_to_agent_config`` and passes it to the runner. When
+    None, Stage B falls back to the legacy 2-arg runner contract — used
+    by tests that don't care about the agent-config wiring.
     """
     validate_options(opts)
     session_id = session_id or make_session_id()
@@ -449,6 +529,7 @@ def run_outer_loop(
                     task_id=task_id,
                     decision=decision,
                     benchmark_config=benchmark_config,
+                    base_agent_config=base_agent_config,
                     runner=runner,
                 )
             except NotImplementedError:
@@ -518,6 +599,7 @@ def run_outer_loop(
 __all__ = [
     "IterResult",
     "MetaLoopResult",
+    "episode_config_to_agent_config",
     "make_session_id",
     "run_outer_loop",
     "stage_a_plan_iter",

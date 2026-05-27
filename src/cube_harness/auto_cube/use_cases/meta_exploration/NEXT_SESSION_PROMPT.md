@@ -69,24 +69,23 @@ before proceeding.
 
 ## Immediate task
 
-Tier 1 #1 (architectural refactor) and #2 (MetaExplorationGennyConfig
-subclass) **landed 2026-05-27**.
+Tier 1 #1 (refactor), #2 (`MetaExplorationGennyConfig` subclass), and
+#3 (Stage B minimum-viable translator) **landed 2026-05-27**.
 
 - Driver + options moved to `auto_cube/python_driver.py` +
-  `auto_cube/options.py` (renamed from the planned `orchestrator.py`
-  because upstream PR #441 shipped a separate LLM-driven
-  `auto_cube/driver.py`).
+  `auto_cube/options.py`.
 - `meta_exploration/agent_config.py` houses
-  `MetaExplorationGennyConfig` (pure-data subclass of `GennyConfig` —
-  no-methods discipline pinned by tests).
+  `MetaExplorationGennyConfig`.
+- `episode_config_to_agent_config()` in `auto_cube/python_driver.py`
+  translates an `EpisodeConfig` to a runnable agent config; `stage_b`
+  gained a 3-arg runner contract when called with `base_agent_config`.
 
-**Start at HANDOFF.md §3 Tier 1 item #3** — the Stage B minimum-viable
-episode runner: translate `EpisodeConfig` → `MetaExplorationGennyConfig`
-→ `Experiment(...).run()` inside `auto_cube/python_driver.py:stage_b_launch_episode`.
-~2-3 hrs.
+**Start at HANDOFF.md §3 Tier 1 item #4** — plan.json writer (end of
+each iter dumps `dict[task_id, PlannerDecision]` to
+`output_dir/iter_<k>/plan.json`). ~30 min.
 
-Then Tier 1 #4 (plan.json writer), then #5 (smoke run on 3-5 TB-2 tasks).
-Total Tier 1 ≈ ½ day remaining.
+Then Tier 1 #5 (smoke run on 3-5 TB-2 tasks — wires a real Experiment
+runner). After that, Tier 2 (scaling experiments).
 
 Do NOT skip ahead to Tier 3 (meta-exploration tests) before Tier 2
 (scaling experiments) tells us whether exploration is actually the
