@@ -24,6 +24,7 @@ from cube_harness.auto_cube.python_driver import (
     stage_d_author_hints,
     stage_e_phase2_promotion,
     stage_f_write_ledger,
+    write_plan_json,
 )
 from cube_harness.llm import LLMConfig
 from cube_harness.meta_exploration.agent_config import MetaExplorationGennyConfig
@@ -601,6 +602,134 @@ def test_stage_b_2arg_path_is_unchanged_when_no_base_agent_config() -> None:
     )
     assert reward == 0.42
     assert captured["ep_cfg"] is BASELINE
+
+
+# ---------------------------------------------------------------------------
+# write_plan_json — per-iter PlannerDecision dump
+# ---------------------------------------------------------------------------
+
+
+def _decision(task_id: str, config_name: str, config: EpisodeConfig) -> PlannerDecision:
+    return PlannerDecision(
+        task_id=task_id,
+        config_name=config_name,
+        config=config,
+        rationale=f"chose {config_name}",
+        alternatives_considered=(("OTHER", "too expensive"),),
+        expected_information_value=f"info-value-for-{config_name}",
+    )
+
+
+def test_write_plan_json_creates_iter_dir_and_returns_path(tmp_path) -> None:
+    path = write_plan_json(
+        output_dir=tmp_path,
+        iter_idx=1,
+        plan={"task_a": _decision("task_a", "BASELINE", BASELINE)},
+    )
+    assert path == tmp_path / "iter_1" / "plan.json"
+    assert path.is_file()
+
+
+def test_write_plan_json_contains_iter_and_task_keys(tmp_path) -> None:
+    import json as _json
+
+    write_plan_json(
+        output_dir=tmp_path,
+        iter_idx=3,
+        plan={
+            "task_a": _decision("task_a", "BASELINE", BASELINE),
+            "task_b": _decision("task_b", "ESCALATE_MODEL", ESCALATE_MODEL),
+        },
+    )
+    payload = _json.loads((tmp_path / "iter_3" / "plan.json").read_text())
+    assert payload["iter"] == 3
+    assert set(payload["tasks"].keys()) == {"task_a", "task_b"}
+    assert payload["tasks"]["task_a"]["config_name"] == "BASELINE"
+    assert payload["tasks"]["task_b"]["config_name"] == "ESCALATE_MODEL"
+    assert payload["tasks"]["task_b"]["config"]["model"] == "azure/gpt-5"
+
+
+def test_write_plan_json_includes_alternatives_and_rationale(tmp_path) -> None:
+    """The free-form rationale + alternatives_considered fields are the
+    debugging surface — they must round-trip into the JSON unchanged."""
+    import json as _json
+
+    write_plan_json(
+        output_dir=tmp_path,
+        iter_idx=1,
+        plan={"x": _decision("x", "BASELINE", BASELINE)},
+    )
+    body = _json.loads((tmp_path / "iter_1" / "plan.json").read_text())["tasks"]["x"]
+    assert body["rationale"] == "chose BASELINE"
+    assert body["alternatives_considered"] == [["OTHER", "too expensive"]]
+    assert body["expected_information_value"] == "info-value-for-BASELINE"
+
+
+def test_write_plan_json_is_idempotent_on_same_iter(tmp_path) -> None:
+    """Re-writing the same iter overwrites cleanly — no leftover from a
+    prior crashed run pollutes the next attempt."""
+    import json as _json
+
+    write_plan_json(
+        output_dir=tmp_path,
+        iter_idx=1,
+        plan={"x": _decision("x", "BASELINE", BASELINE)},
+    )
+    write_plan_json(
+        output_dir=tmp_path,
+        iter_idx=1,
+        plan={"x": _decision("x", "ESCALATE_MODEL", ESCALATE_MODEL)},
+    )
+    payload = _json.loads((tmp_path / "iter_1" / "plan.json").read_text())
+    assert payload["tasks"]["x"]["config_name"] == "ESCALATE_MODEL"
+
+
+def test_run_outer_loop_writes_plan_json_per_iter(isolated_ledger, tmp_path) -> None:
+    """End-to-end: ``run_outer_loop`` must emit one plan.json per iter
+    under ``output_dir/iter_<k>/``."""
+    import json as _json
+
+    result = run_outer_loop(
+        opts=WEAK_NOOP,
+        cube="cube",
+        task_ids=["t1", "t2"],
+        iterations=2,
+        benchmark_config=None,
+        output_dir=tmp_path / "r",
+        runner=lambda tid, cfg: 0.5,
+    )
+    for iter_idx in range(1, 3):
+        path = result.output_dir / f"iter_{iter_idx}" / "plan.json"
+        assert path.is_file(), f"missing {path}"
+        body = _json.loads(path.read_text())
+        assert body["iter"] == iter_idx
+        assert set(body["tasks"].keys()) == {"t1", "t2"}
+
+
+def test_run_outer_loop_does_not_crash_if_plan_write_fails(isolated_ledger, tmp_path) -> None:
+    """A plan-write failure must NOT abort the iter (it's a debugging
+    artefact, not the actual computation). Force the failure by making
+    the parent dir a file so mkdir collides."""
+    bad_root = tmp_path / "r"
+    bad_root.write_text("I am a file, not a dir")  # mkdir(parents=True) under here will fail
+    # run_outer_loop creates output_dir at the top; we sabotage *after* that
+    # by making iter_1 collide. We use a fresh dir but make `iter_1` a file
+    # so the mkdir(exist_ok=True) inside write_plan_json hits FileExistsError.
+    bad_root.unlink()
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / "iter_1").write_text("collision")
+    result = run_outer_loop(
+        opts=WEAK_NOOP,
+        cube="cube",
+        task_ids=["t"],
+        iterations=1,
+        benchmark_config=None,
+        output_dir=root,
+        runner=lambda tid, cfg: 1.0,
+    )
+    # The run still completed despite the plan-write blowing up.
+    assert result.iterations_run == 1
 
 
 def test_run_outer_loop_with_base_agent_config_threads_translation(isolated_ledger, tmp_path) -> None:

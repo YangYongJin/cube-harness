@@ -69,23 +69,33 @@ before proceeding.
 
 ## Immediate task
 
-Tier 1 #1 (refactor), #2 (`MetaExplorationGennyConfig` subclass), and
-#3 (Stage B minimum-viable translator) **landed 2026-05-27**.
+**Tier 1 is code-complete (2026-05-27).** All five line items landed:
+#1 refactor, #2 `MetaExplorationGennyConfig`, #3 Stage B translator,
+#4 plan.json writer, #5 smoke script. Tests 1095 passing.
 
-- Driver + options moved to `auto_cube/python_driver.py` +
-  `auto_cube/options.py`.
-- `meta_exploration/agent_config.py` houses
-  `MetaExplorationGennyConfig`.
-- `episode_config_to_agent_config()` in `auto_cube/python_driver.py`
-  translates an `EpisodeConfig` to a runnable agent config; `stage_b`
-  gained a 3-arg runner contract when called with `base_agent_config`.
+The only remaining Tier 1 action that needs human-in-the-loop is
+**executing the smoke**:
 
-**Start at HANDOFF.md §3 Tier 1 item #4** — plan.json writer (end of
-each iter dumps `dict[task_id, PlannerDecision]` to
-`output_dir/iter_<k>/plan.json`). ~30 min.
+```bash
+# 1. Install the TB-2 cube workspace (if not already):
+uv pip install -e cubes/terminalbench2-cube
 
-Then Tier 1 #5 (smoke run on 3-5 TB-2 tasks — wires a real Experiment
-runner). After that, Tier 2 (scaling experiments).
+# 2. Ensure LLM creds:
+export AZURE_OPENAI_API_KEY=...  # or OPENAI_API_KEY
+
+# 3. Run the smoke (expected ~$2-5 + 10-20min wall):
+uv run scripts/smoke/auto_cube_meta_exploration.py --execute
+# or with a different recipe:
+uv run scripts/smoke/auto_cube_meta_exploration.py --execute --recipe combined
+```
+
+If the smoke goes green, Tier 1 is fully validated end-to-end and you
+can move to **Tier 2 — scaling experiments** (HANDOFF.md §3 Tier 2 #6).
+The scaling sweep answers the load-bearing question: *is exploration
+actually the bottleneck?* If uniform extra compute on more episodes /
+longer rollouts saturates win-rate quickly, meta-exploration is
+speculative and priorities shift to hint-quality work (Tier 4)
+instead of Tier 3 (algorithm ports).
 
 Do NOT skip ahead to Tier 3 (meta-exploration tests) before Tier 2
 (scaling experiments) tells us whether exploration is actually the

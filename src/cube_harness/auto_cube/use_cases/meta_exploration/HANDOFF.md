@@ -3,10 +3,10 @@
 **Status:** branch in good shape, foundational architecture landed,
 specific algorithm wiring remaining. Read this top-to-bottom to pick up.
 
-**Date of handoff:** 2026-05-27 (refreshed after Tier 1 #1 + #2 + #3)
+**Date of handoff:** 2026-05-27 (Tier 1 complete — #1, #2, #3, #4, #5 landed)
 **Branch:** `feat/meta-exploration` on `YangYongJin/cube-harness` (fork
 of `The-AI-Alliance/cube-harness`)
-**Tests:** 1089 passed, 7 skipped, 14 deselected — clean baseline.
+**Tests:** 1095 passed, 7 skipped, 14 deselected — clean baseline.
 
 ---
 
@@ -63,10 +63,10 @@ tests/test_auto_cube_{options,python_driver}.py
 | planner (`meta_exploration/`) | 22 | ✅ |
 | agent_config (`meta_exploration/`) | 7 | ✅ |
 | options (`auto_cube/`) | 25 | ✅ |
-| python_driver (`auto_cube/`) | 32 | ✅ |
-| **Total new** | **153** | ✅ |
+| python_driver (`auto_cube/`) | 38 | ✅ |
+| **Total new** | **159** | ✅ |
 | Pre-existing cube-harness baseline | 936 | ✅ |
-| **Grand total** | **1089** | ✅ |
+| **Grand total** | **1095** | ✅ |
 
 ---
 
@@ -186,16 +186,33 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
      + non-mutation invariants + unrelated-field preservation. stage_b
      3-arg path + 2-arg backwards-compat + honest-split-still-fires).
 
-#### 4. **Plan.json writer + minimal Stage F polish** (~30 min)
-   - End of each iter: dump `dict[task_id, PlannerDecision]` to
-     `output_dir/iter_<k>/plan.json`. Already designed; just needs
-     code in `auto_cube/python_driver.py`. Critical for debugging the
-     pilot runs.
+#### 4. ✅ **DONE (2026-05-27)** Plan.json writer
+   - `write_plan_json()` in `auto_cube/python_driver.py` writes
+     `output_dir/iter_<k>/plan.json` per iter — keyed by task_id with
+     {config_name, config (asdict EpisodeConfig), rationale,
+     alternatives_considered, expected_information_value}.
+   - Wired into `run_outer_loop` immediately after Stage A so a crashed
+     run still leaves the iter's decisions on disk for post-mortem.
+   - Idempotent re-writes; failures logged but never abort the iter.
+   - 6 tests: returns expected path, contains iter/tasks, alternatives
+     round-trip, idempotent on re-write, run_outer_loop emits per iter,
+     plan-write failure doesn't crash the iter.
 
-#### 5. **Smoke runs** (~$2-5, half hour wall)
-   - `weak_noop` and `combined` on 3-5 tasks, 1 iter, TB-2
-   - Confirms end-to-end plumbing of A + B + F + the honest-gate
-     assertion.
+#### 5. ✅ **DONE (2026-05-27)** Smoke script
+   - [`scripts/smoke/auto_cube_meta_exploration.py`](../../../../../scripts/smoke/auto_cube_meta_exploration.py)
+     is ready. Bypasses `run_outer_loop` and composes Stages A + B + F
+     manually so the iter-level batching (one `Experiment` per
+     (agent_config, episode_config) group) is explicit.
+   - Defaults to `--dry-run` for safety; only `--execute` actually
+     spends LLM money / stands up Docker.
+   - Auto-skips when `terminalbench2_cube` isn't importable or
+     `AZURE_OPENAI_API_KEY`/`OPENAI_API_KEY` is missing.
+   - Prints the cube-harness smoke contract (`SMOKE OK / FAIL / SKIP`).
+   - **NOT YET EXECUTED.** Expected cost ~$2-5; needs the user to
+     install `cubes/terminalbench2-cube` + provide LLM creds, then run:
+     `uv run scripts/smoke/auto_cube_meta_exploration.py --execute`
+   - Once the smoke goes green, Tier 1 is fully validated end-to-end
+     and Tier 2 (scaling experiments) can begin.
 
 ### Tier 2 — scaling experiments (the load-bearing scientific question)
 

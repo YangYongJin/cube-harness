@@ -36,9 +36,10 @@ Once Stages C/D/E land, every ``AutoCubeOptions`` recipe in
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -186,6 +187,67 @@ def stage_a_plan_iter(
         summarize_plan(plan),
     )
     return plan
+
+
+# ---------------------------------------------------------------------------
+# Plan.json writer — per-iter PlannerDecision dump
+# ---------------------------------------------------------------------------
+
+
+def write_plan_json(
+    *,
+    output_dir: Path,
+    iter_idx: int,
+    plan: dict[str, PlannerDecision],
+) -> Path:
+    """Dump the iter's per-task ``PlannerDecision`` to
+    ``output_dir/iter_<k>/plan.json``.
+
+    The on-disk shape:
+
+        {
+          "iter": <int>,
+          "tasks": {
+            "<task_id>": {
+              "config_name": "...",
+              "config": { ...EpisodeConfig fields... },
+              "rationale": "...",
+              "alternatives_considered": [["NAME", "why_not_picked"], ...],
+              "expected_information_value": "...",
+            },
+            ...
+          }
+        }
+
+    The plan file is the primary artefact for debugging the pilot runs —
+    a glance tells you which config the planner picked for each task
+    and why. ``EpisodeConfig`` is a frozen dataclass and serializes
+    cleanly via ``dataclasses.asdict``.
+
+    Returns the path of the written file. Creates ``iter_<k>/`` if
+    missing. Overwrites any existing plan.json for the same iter (idempotent).
+    """
+    iter_dir = output_dir / f"iter_{iter_idx}"
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    path = iter_dir / "plan.json"
+    # `task_id` is already keyed in the outer dict; drop it from the
+    # per-task body to avoid duplication.
+    payload: dict[str, object] = {
+        "iter": iter_idx,
+        "tasks": {
+            task_id: {
+                "config_name": decision.config_name,
+                "config": asdict(decision.config),
+                "rationale": decision.rationale,
+                "alternatives_considered": list(decision.alternatives_considered),
+                "expected_information_value": decision.expected_information_value,
+            }
+            for task_id, decision in plan.items()
+        },
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    logger.info("wrote plan.json iter=%d path=%s tasks=%d", iter_idx, path, len(plan))
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +580,12 @@ def run_outer_loop(
             recent_rewards=recent_rewards,
             budget_remaining_usd=budget_remaining_usd,
         )
+        # Persist the plan immediately — a crashed run still leaves the
+        # iter's decisions on disk for post-mortem.
+        try:
+            write_plan_json(output_dir=output_dir, iter_idx=iter_idx, plan=plan)
+        except Exception:
+            logger.exception("plan.json write failed for iter=%d; continuing", iter_idx)
 
         # Stage B — launch episodes (with honest-split assertion).
         per_task_rewards: dict[str, float] = {}
@@ -608,4 +676,5 @@ __all__ = [
     "stage_d_author_hints",
     "stage_e_phase2_promotion",
     "stage_f_write_ledger",
+    "write_plan_json",
 ]
