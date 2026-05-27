@@ -3,10 +3,10 @@
 **Status:** branch in good shape, foundational architecture landed,
 specific algorithm wiring remaining. Read this top-to-bottom to pick up.
 
-**Date of handoff:** 2026-05-27 (refreshed after Tier 1 #1 refactor)
+**Date of handoff:** 2026-05-27 (refreshed after Tier 1 #1 + #2)
 **Branch:** `feat/meta-exploration` on `YangYongJin/cube-harness` (fork
 of `The-AI-Alliance/cube-harness`)
-**Tests:** 1068 passed, 7 skipped, 14 deselected — clean baseline.
+**Tests:** 1075 passed, 7 skipped, 14 deselected — clean baseline.
 
 ---
 
@@ -32,7 +32,9 @@ src/cube_harness/meta_exploration/                # use-case-specific module
 ├── ledger.py               # ~/auto_cube/hints.json — L2/L3/L4 taxonomy
 ├── recipe_router.py        # L1 dispatch heuristic
 ├── promotion.py            # Phase 1/2 candidate detection + re-test gate
-└── planner.py              # EpisodeConfig + per-task policy
+├── planner.py              # EpisodeConfig + per-task policy
+└── agent_config.py         # MetaExplorationGennyConfig (Option B
+                            # subclass; pure data — discipline pinned)
 
 src/cube_harness/auto_cube/                       # universal Auto-CUBE infra
 ├── options.py              # AutoCubeOptions — ablation framework (moved 2026-05-27)
@@ -47,7 +49,7 @@ src/cube_harness/auto_cube/use_cases/meta_exploration/  # the use case
 ├── HANDOFF.md              # THIS FILE
 └── templates/exp_config.py # per-round Python config template
 
-tests/test_meta_exploration_{ledger,recipe_router,promotion,planner}.py
+tests/test_meta_exploration_{ledger,recipe_router,promotion,planner,agent_config}.py
 tests/test_auto_cube_{options,python_driver}.py
 ```
 
@@ -59,11 +61,12 @@ tests/test_auto_cube_{options,python_driver}.py
 | recipe_router (`meta_exploration/`) | 21 | ✅ |
 | promotion (`meta_exploration/`) | 22 | ✅ |
 | planner (`meta_exploration/`) | 22 | ✅ |
+| agent_config (`meta_exploration/`) | 7 | ✅ |
 | options (`auto_cube/`) | 25 | ✅ |
 | python_driver (`auto_cube/`) | 18 | ✅ |
-| **Total new** | **132** | ✅ |
+| **Total new** | **139** | ✅ |
 | Pre-existing cube-harness baseline | 936 | ✅ |
-| **Grand total** | **1068** | ✅ |
+| **Grand total** | **1075** | ✅ |
 
 ---
 
@@ -141,15 +144,21 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
      `filter_menu_by_options` back into `meta_exploration/` and keep
      only the dataclass + recipes in `auto_cube/options.py`.
 
-#### 2. **MetaExplorationGennyConfig subclass** (Option B — see DESIGN.md §10 Q1) (~30 min)
-   - File: `meta_exploration/agent_config.py` (new)
-   - Pure data extension over upstream `GennyConfig`. Adds:
+#### 2. ✅ **DONE (2026-05-27)** MetaExplorationGennyConfig subclass (Option B — see DESIGN.md §10 Q1)
+   - File: [`meta_exploration/agent_config.py`](../../../meta_exploration/agent_config.py)
+   - Pure data extension over upstream `GennyConfig`. Fields:
      `k_candidates: int = 1`, `k_plans: int = 1`,
-     `enable_refiner: bool = False`, `perturbations: list[str] = []`
-   - **DISCIPLINE PIN:** no method overrides — pinned via a comment AND
-     a test asserting `set(MetaExplorationGennyConfig.__dict__).difference(set(GennyConfig.__dict__)) == {set of field names}`.
-     This keeps the B→A migration trivial (~5 min) if Alec eventually
-     accepts the upstream RFC.
+     `enable_refiner: bool = False`,
+     `perturbations: list[str] = Field(default_factory=list)`
+   - **DISCIPLINE PIN** enforced by `tests/test_meta_exploration_agent_config.py`:
+     - `test_no_method_overrides_in_subclass` — diff of own callable
+       members between child and parent must be empty
+     - `test_subclass_adds_exactly_the_expected_fields` — `model_fields`
+       diff equals the four documented fields
+     - +5 sanity tests (defaults, isinstance, fresh-list per instance,
+       construction with new knobs, inherited-field access). 7 passing.
+   - Module + test docstrings carry the "do not add methods here"
+     instruction so future contributors see it before adding code.
 
 #### 3. **Stage B episode runner — minimum viable** (~2-3 hrs)
    - File: `auto_cube/python_driver.py:stage_b_launch_episode`

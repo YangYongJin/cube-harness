@@ -69,18 +69,24 @@ before proceeding.
 
 ## Immediate task
 
-Tier 1 #1 (architectural refactor) **landed 2026-05-27** — driver +
-options now live at `auto_cube/python_driver.py` + `auto_cube/options.py`.
-(Renamed from the original `orchestrator.py` plan because upstream PR
-#441 shipped a separate `auto_cube/driver.py` — the LLM-driven sibling
-to our Python-SDK driver.)
+Tier 1 #1 (architectural refactor) and #2 (MetaExplorationGennyConfig
+subclass) **landed 2026-05-27**.
 
-**Start at HANDOFF.md §3 Tier 1 item #2** — the
-`MetaExplorationGennyConfig` subclass with the no-methods discipline
-test. ~30 min.
+- Driver + options moved to `auto_cube/python_driver.py` +
+  `auto_cube/options.py` (renamed from the planned `orchestrator.py`
+  because upstream PR #441 shipped a separate LLM-driven
+  `auto_cube/driver.py`).
+- `meta_exploration/agent_config.py` houses
+  `MetaExplorationGennyConfig` (pure-data subclass of `GennyConfig` —
+  no-methods discipline pinned by tests).
 
-Then Tier 1 #3 (Stage B minimum viable runner), then #4 (plan.json
-writer), then #5 (smoke run on 3-5 TB-2 tasks). Total Tier 1 ≈ 1 day.
+**Start at HANDOFF.md §3 Tier 1 item #3** — the Stage B minimum-viable
+episode runner: translate `EpisodeConfig` → `MetaExplorationGennyConfig`
+→ `Experiment(...).run()` inside `auto_cube/python_driver.py:stage_b_launch_episode`.
+~2-3 hrs.
+
+Then Tier 1 #4 (plan.json writer), then #5 (smoke run on 3-5 TB-2 tasks).
+Total Tier 1 ≈ ½ day remaining.
 
 Do NOT skip ahead to Tier 3 (meta-exploration tests) before Tier 2
 (scaling experiments) tells us whether exploration is actually the
