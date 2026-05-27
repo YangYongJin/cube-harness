@@ -7,20 +7,21 @@ ablation table from
 `auto_cube/use_cases/meta_exploration/DESIGN.md` §2 fall out of the
 architecture without per-experiment glue code.
 
-The orchestrator (outer-loop SDK driver, Pivot 7) reads an
+The Python-SDK driver (``auto_cube/python_driver.py``) reads an
 ``AutoCubeOptions`` instance at iter start and conditionally fires each
 stage. Modules consume specific fields:
 
-  Stage A (per-episode config policy) — ``planner.py``  ← reads
-    ``enable_config_policy``, ``allow_model_escalation``.
-  Stage C (per-trajectory Investigator dispatch) — ``recipe_router.py``
-    ← reads ``enable_l1_recipe_routing``.
-  Stage D (hint authoring) — orchestrator routes findings into hinter
-    when ``enable_hint_authoring``.
-  Stage E (Phase 2 promotion gate) — ``promotion.py`` ← reads
-    ``enable_text_promotion`` / ``enable_config_promotion``,
+  Stage A (per-episode config policy) — ``meta_exploration/planner.py``
+    ← reads ``enable_config_policy``, ``allow_model_escalation``.
+  Stage C (per-trajectory Investigator dispatch) —
+    ``meta_exploration/recipe_router.py`` ← reads
+    ``enable_l1_recipe_routing``.
+  Stage D (hint authoring) — driver routes findings into hinter when
+    ``enable_hint_authoring``.
+  Stage E (Phase 2 promotion gate) — ``meta_exploration/promotion.py``
+    ← reads ``enable_text_promotion`` / ``enable_config_promotion``,
     ``held_out_size``, ``min_observations_for_promotion``.
-  Stage F (ledger writes) — ``ledger.py`` ← gated by
+  Stage F (ledger writes) — ``meta_exploration/ledger.py`` ← gated by
     ``enable_ledger_writes``.
 
 **Honest training/inference split** (DESIGN.md §1) is code-enforced
@@ -31,10 +32,9 @@ that model, not from a training-time ``ESCALATE_MODEL`` trajectory.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from cube_harness.meta_exploration.planner import EPISODE_CONFIG_MENU, EpisodeConfig
-
 
 # ---------------------------------------------------------------------------
 # AutoCubeOptions — the union of all toggleable knobs
@@ -235,8 +235,7 @@ def validate_options(opts: AutoCubeOptions) -> None:
         )
     if opts.enable_pareto_verify and not opts.enable_hint_authoring:
         raise IncoherentOptionsError(
-            "enable_pareto_verify=True requires enable_hint_authoring=True; "
-            "Pareto-verify guards text-hint mutations."
+            "enable_pareto_verify=True requires enable_hint_authoring=True; Pareto-verify guards text-hint mutations."
         )
     if opts.propose_multiple_harnesses and not opts.enable_hint_authoring:
         raise IncoherentOptionsError(
@@ -245,8 +244,7 @@ def validate_options(opts: AutoCubeOptions) -> None:
         )
     if opts.propose_multiple_harnesses and opts.n_proposed_harnesses < 2:
         raise IncoherentOptionsError(
-            f"propose_multiple_harnesses=True requires n_proposed_harnesses>=2; "
-            f"got {opts.n_proposed_harnesses}."
+            f"propose_multiple_harnesses=True requires n_proposed_harnesses>=2; got {opts.n_proposed_harnesses}."
         )
 
 

@@ -103,11 +103,13 @@ def test_load_ledger_non_dict_root_returns_empty(isolated_ledger: Path) -> None:
 def test_load_ledger_drops_malformed_entries(isolated_ledger: Path) -> None:
     isolated_ledger.parent.mkdir(parents=True, exist_ok=True)
     isolated_ledger.write_text(
-        json.dumps({
-            "bad_no_pipe": {"disposition": "steered"},   # no pipe in key
-            "miniwob|good": {"disposition": "promoted"},  # OK
-            "miniwob|broken": "not_a_dict",               # not a dict value
-        })
+        json.dumps(
+            {
+                "bad_no_pipe": {"disposition": "steered"},  # no pipe in key
+                "miniwob|good": {"disposition": "promoted"},  # OK
+                "miniwob|broken": "not_a_dict",  # not a dict value
+            }
+        )
     )
     out = load_ledger()
     assert set(out.keys()) == {"miniwob|good"}
@@ -171,7 +173,8 @@ def test_save_ledger_creates_parent_dir(tmp_path: Path, monkeypatch: pytest.Monk
 
 def test_upsert_creates_entry_if_missing(isolated_ledger: Path) -> None:
     entry = upsert_entry(
-        "miniwob", "click-button",
+        "miniwob",
+        "click-button",
         session_id="sess-A",
         disposition="steered",
         hint_type="task_specific",
@@ -185,14 +188,16 @@ def test_upsert_creates_entry_if_missing(isolated_ledger: Path) -> None:
 
 def test_upsert_preserves_unspecified_fields(isolated_ledger: Path) -> None:
     upsert_entry(
-        "miniwob", "use-slider",
+        "miniwob",
+        "use-slider",
         session_id="sess-A",
         disposition="steered",
         hint_text="initial hint",
     )
     # Second call only mutates disposition + session; hint_text + hint_type left alone.
     upsert_entry(
-        "miniwob", "use-slider",
+        "miniwob",
+        "use-slider",
         session_id="sess-B",
         disposition="promoted",
         promoted_to="task_hints",
@@ -238,11 +243,20 @@ def test_taxonomy_constants_match_module() -> None:
     # test surfaces it explicitly.
     assert set(HINT_TYPES) == {"clarification", "task_specific", "general_guidance"}
     assert set(DISPOSITIONS) == {
-        "steered", "promoted", "cheat_only", "not_a_hint", "unsteerable", "open",
+        "steered",
+        "promoted",
+        "cheat_only",
+        "not_a_hint",
+        "unsteerable",
+        "open",
     }
     assert set(PROMOTED_TO_VALUES) == {
-        "task_hints", "benchmark_hint_prompt", "task_clarification",
-        "description_overrides", "new_action", "system_prompt",
+        "task_hints",
+        "benchmark_hint_prompt",
+        "task_clarification",
+        "description_overrides",
+        "new_action",
+        "system_prompt",
     }
 
 
@@ -256,7 +270,8 @@ def test_on_disk_shape_matches_auto_cube_spec(isolated_ledger: Path) -> None:
     match so a Mode-C Claude Code session can read this ledger and ship
     upstream PRs from it. Pin the field names + nesting here."""
     upsert_entry(
-        "miniwob", "use-slider",
+        "miniwob",
+        "use-slider",
         session_id="sess-A",
         disposition="promoted",
         hint_type="task_specific",

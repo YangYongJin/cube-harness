@@ -59,7 +59,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -77,12 +76,12 @@ HINT_TYPES: tuple[HintType, ...] = (
 
 # Level 3 — per-task outer-loop disposition.
 Disposition = Literal[
-    "steered",       # low-reg hint flipped this task to success
-    "promoted",      # the steer generalized + shipped as a higher-reg artefact
-    "cheat_only",    # steer works but is genuinely task-specific (no PR)
-    "not_a_hint",    # failure root cause is a real bug (route to debug)
-    "unsteerable",   # capability ceiling; no hint helps
-    "open",          # initial state — no decision recorded yet this session
+    "steered",  # low-reg hint flipped this task to success
+    "promoted",  # the steer generalized + shipped as a higher-reg artefact
+    "cheat_only",  # steer works but is genuinely task-specific (no PR)
+    "not_a_hint",  # failure root cause is a real bug (route to debug)
+    "unsteerable",  # capability ceiling; no hint helps
+    "open",  # initial state — no decision recorded yet this session
 ]
 DISPOSITIONS: tuple[Disposition, ...] = (
     "steered",
@@ -96,12 +95,12 @@ DISPOSITIONS: tuple[Disposition, ...] = (
 # Level 4 — where a promoted hint landed on the regularization ladder.
 # `None` until/unless disposition becomes "promoted".
 PromotedTo = Literal[
-    "task_hints",            # low — local task hint cheat
-    "benchmark_hint_prompt", # high — benchmark-wide orientation
-    "task_clarification",    # high — per-task wording fix
-    "description_overrides", # high — action wording override
-    "new_action",            # high — added/changed action surface
-    "system_prompt",         # high — generalist system prompt change
+    "task_hints",  # low — local task hint cheat
+    "benchmark_hint_prompt",  # high — benchmark-wide orientation
+    "task_clarification",  # high — per-task wording fix
+    "description_overrides",  # high — action wording override
+    "new_action",  # high — added/changed action surface
+    "system_prompt",  # high — generalist system prompt change
 ]
 PROMOTED_TO_VALUES: tuple[PromotedTo, ...] = (
     "task_hints",

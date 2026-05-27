@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-import pytest
-
 from cube_harness.meta_exploration.recipe_router import (
+    _RECIPE_DISPATCH_INSTRUCTION,
     RECIPES,
     RouteDecision,
-    _RECIPE_DISPATCH_INSTRUCTION,
     classify_recipe,
     format_routing_for_prompt,
     route_iter_tasks,
     summarize_routing,
 )
-
 
 # ---------------------------------------------------------------------------
 # Per-task classify_recipe (the core decision tree)
@@ -49,17 +46,13 @@ def test_failure_with_repeat_below_threshold_routes_to_hinter() -> None:
 
 def test_failure_with_high_tokens_per_step_routes_to_profiling() -> None:
     """tokens_per_step above the 50k threshold → profiling."""
-    d = classify_recipe(
-        task_id="x", reward=0.0, n_episodes=1, tokens_per_step=80_000.0
-    )
+    d = classify_recipe(task_id="x", reward=0.0, n_episodes=1, tokens_per_step=80_000.0)
     assert d.recipe == "profiling"
     assert "quantitative" in d.rationale.lower()
 
 
 def test_failure_with_normal_tokens_per_step_routes_to_hinter() -> None:
-    d = classify_recipe(
-        task_id="x", reward=0.0, n_episodes=1, tokens_per_step=10_000.0
-    )
+    d = classify_recipe(task_id="x", reward=0.0, n_episodes=1, tokens_per_step=10_000.0)
     assert d.recipe == "hinter"
 
 
@@ -67,8 +60,11 @@ def test_scaffolding_wins_over_profiling_when_both_signal() -> None:
     """When a failure is BOTH loopy AND token-heavy, scaffolding wins —
     the loop is the proximate cause; profiling is a downstream symptom."""
     d = classify_recipe(
-        task_id="x", reward=0.0, n_episodes=1,
-        max_repeat=5, tokens_per_step=100_000.0,
+        task_id="x",
+        reward=0.0,
+        n_episodes=1,
+        max_repeat=5,
+        tokens_per_step=100_000.0,
     )
     assert d.recipe == "agent_scaffolding"
 
@@ -92,9 +88,7 @@ def test_custom_success_threshold_lowers_pass_bar() -> None:
     d_default = classify_recipe(task_id="x", reward=0.3, n_episodes=1)
     assert d_default.recipe == "hinter"
     assert "default route" in d_default.rationale  # failed branch
-    d_custom = classify_recipe(
-        task_id="x", reward=0.3, n_episodes=1, success_threshold=0.2
-    )
+    d_custom = classify_recipe(task_id="x", reward=0.3, n_episodes=1, success_threshold=0.2)
     assert d_custom.recipe == "hinter"
     assert "success" in d_custom.rationale.lower()
 
@@ -118,7 +112,7 @@ def test_route_iter_tasks_with_repeats_routes_one_to_scaffolding() -> None:
         per_task_max_repeat={"a": 3, "b": 2, "c": 5},
     )
     assert decisions["a"].recipe == "agent_scaffolding"
-    assert decisions["b"].recipe == "hinter"           # below threshold
+    assert decisions["b"].recipe == "hinter"  # below threshold
     assert decisions["c"].recipe == "agent_scaffolding"
 
 
@@ -136,7 +130,7 @@ def test_route_iter_tasks_missing_task_in_optional_dicts() -> None:
     routing should still work, no KeyError."""
     decisions = route_iter_tasks(
         per_task_rewards={"a": 0.0, "b": 0.0},
-        per_task_max_repeat={"a": 5},   # only 'a' has this signal
+        per_task_max_repeat={"a": 5},  # only 'a' has this signal
     )
     assert decisions["a"].recipe == "agent_scaffolding"
     assert decisions["b"].recipe == "hinter"
@@ -156,8 +150,10 @@ def test_summarize_routing_counts_all_recipes() -> None:
     }
     counts = summarize_routing(decisions)
     assert counts == {
-        "hinter": 2, "general_blame": 0,
-        "agent_scaffolding": 1, "profiling": 1,
+        "hinter": 2,
+        "general_blame": 0,
+        "agent_scaffolding": 1,
+        "profiling": 1,
     }
 
 
@@ -227,7 +223,10 @@ def test_recipes_constant_matches_upstream_use_cases() -> None:
     `analyze/investigator/use_cases/<name>/`. If upstream adds or
     removes one, this test fires loudly so we know to re-sync."""
     assert set(RECIPES) == {
-        "hinter", "general_blame", "agent_scaffolding", "profiling",
+        "hinter",
+        "general_blame",
+        "agent_scaffolding",
+        "profiling",
     }
 
 

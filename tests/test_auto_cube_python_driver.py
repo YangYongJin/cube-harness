@@ -6,16 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from cube_harness.meta_exploration.ledger import HintLedgerEntry
-from cube_harness.meta_exploration.options import (
+from cube_harness.auto_cube.options import (
     COMBINED,
     HINTER_ONLY,
-    IncoherentOptionsError,
     META_EXPLORATION_ONLY,
     WEAK_NOOP,
     AutoCubeOptions,
+    IncoherentOptionsError,
 )
-from cube_harness.meta_exploration.outer_loop_driver import (
+from cube_harness.auto_cube.python_driver import (
     make_session_id,
     run_outer_loop,
     stage_a_plan_iter,
@@ -62,7 +61,7 @@ def test_stage_a_returns_baseline_when_config_policy_off(isolated_ledger) -> Non
     plan = stage_a_plan_iter(
         cube="terminalbench2",
         task_ids=["a", "b"],
-        opts=WEAK_NOOP,   # enable_config_policy=False
+        opts=WEAK_NOOP,  # enable_config_policy=False
         recent_rewards={"a": [], "b": []},
         budget_remaining_usd=10.0,
     )
@@ -97,8 +96,11 @@ def test_stage_b_fires_honest_split_assertion_on_promotion_with_wrong_model() ->
     opts = AutoCubeOptions(inference_model="azure/gpt-5-mini")
     bad_cfg = EpisodeConfig(model="azure/gpt-5", apply_promotion=True)
     decision = PlannerDecision(
-        task_id="x", config_name="RETEST", config=bad_cfg,
-        rationale="r", alternatives_considered=(),
+        task_id="x",
+        config_name="RETEST",
+        config=bad_cfg,
+        rationale="r",
+        alternatives_considered=(),
         expected_information_value="",
     )
 
@@ -107,7 +109,9 @@ def test_stage_b_fires_honest_split_assertion_on_promotion_with_wrong_model() ->
 
     with pytest.raises(IncoherentOptionsError, match="re-test gate violation"):
         stage_b_launch_episode(
-            opts=opts, task_id="x", decision=decision,
+            opts=opts,
+            task_id="x",
+            decision=decision,
             benchmark_config=None,
             runner=runner_should_not_be_called,
         )
@@ -117,12 +121,17 @@ def test_stage_b_passes_when_promotion_uses_inference_model() -> None:
     opts = AutoCubeOptions(inference_model="azure/gpt-5-mini")
     ok_cfg = EpisodeConfig(model="azure/gpt-5-mini", apply_promotion=True)
     decision = PlannerDecision(
-        task_id="x", config_name="RETEST", config=ok_cfg,
-        rationale="r", alternatives_considered=(),
+        task_id="x",
+        config_name="RETEST",
+        config=ok_cfg,
+        rationale="r",
+        alternatives_considered=(),
         expected_information_value="",
     )
     reward = stage_b_launch_episode(
-        opts=opts, task_id="x", decision=decision,
+        opts=opts,
+        task_id="x",
+        decision=decision,
         benchmark_config=None,
         runner=lambda tid, cfg: 1.0,
     )
@@ -134,12 +143,17 @@ def test_stage_b_passes_for_non_promotion_episode_with_strong_model() -> None:
     opts = AutoCubeOptions(inference_model="azure/gpt-5-mini")
     cfg = EpisodeConfig(model="azure/gpt-5", apply_promotion=False)
     decision = PlannerDecision(
-        task_id="x", config_name="ESCALATE_MODEL", config=cfg,
-        rationale="r", alternatives_considered=(),
+        task_id="x",
+        config_name="ESCALATE_MODEL",
+        config=cfg,
+        rationale="r",
+        alternatives_considered=(),
         expected_information_value="",
     )
     reward = stage_b_launch_episode(
-        opts=opts, task_id="x", decision=decision,
+        opts=opts,
+        task_id="x",
+        decision=decision,
         benchmark_config=None,
         runner=lambda tid, cfg: 0.5,
     )
@@ -150,13 +164,18 @@ def test_stage_b_no_runner_raises_with_actionable_message() -> None:
     """Default (no runner) raises NotImplementedError with contract hint."""
     opts = AutoCubeOptions()
     decision = PlannerDecision(
-        task_id="x", config_name="BASELINE", config=BASELINE,
-        rationale="r", alternatives_considered=(),
+        task_id="x",
+        config_name="BASELINE",
+        config=BASELINE,
+        rationale="r",
+        alternatives_considered=(),
         expected_information_value="",
     )
     with pytest.raises(NotImplementedError, match="runner"):
         stage_b_launch_episode(
-            opts=opts, task_id="x", decision=decision,
+            opts=opts,
+            task_id="x",
+            decision=decision,
             benchmark_config=None,
         )
 
@@ -169,10 +188,14 @@ def test_stage_b_no_runner_raises_with_actionable_message() -> None:
 def test_stage_c_stubbed_with_contract() -> None:
     with pytest.raises(NotImplementedError, match="Contract"):
         stage_c_dispatch_investigator(
-            opts=WEAK_NOOP, trajectory=None,
+            opts=WEAK_NOOP,
+            trajectory=None,
             decision=PlannerDecision(
-                task_id="x", config_name="BASELINE", config=BASELINE,
-                rationale="r", alternatives_considered=(),
+                task_id="x",
+                config_name="BASELINE",
+                config=BASELINE,
+                rationale="r",
+                alternatives_considered=(),
                 expected_information_value="",
             ),
         )
@@ -186,9 +209,13 @@ def test_stage_d_stubbed_with_contract() -> None:
 def test_stage_e_stubbed_with_contract() -> None:
     with pytest.raises(NotImplementedError, match="Contract"):
         stage_e_phase2_promotion(
-            opts=COMBINED, cube="x", session_id="s",
-            hints_before={}, hints_after={},
-            per_task_rewards={}, benchmark_config=None,
+            opts=COMBINED,
+            cube="x",
+            session_id="s",
+            hints_before={},
+            hints_after={},
+            per_task_rewards={},
+            benchmark_config=None,
         )
 
 
@@ -199,18 +226,24 @@ def test_stage_e_stubbed_with_contract() -> None:
 
 def test_stage_f_writes_per_task_entries(isolated_ledger) -> None:
     stage_f_write_ledger(
-        opts=WEAK_NOOP, cube="terminalbench2", session_id="sid-A",
+        opts=WEAK_NOOP,
+        cube="terminalbench2",
+        session_id="sid-A",
         iter_idx=1,
         per_task_rewards={"task_a": 1.0, "task_b": 0.0},
         per_task_decisions={
             "task_a": PlannerDecision(
-                task_id="task_a", config_name="BASELINE", config=BASELINE,
-                rationale="r", alternatives_considered=(),
+                task_id="task_a",
+                config_name="BASELINE",
+                config=BASELINE,
+                rationale="r",
+                alternatives_considered=(),
                 expected_information_value="",
             ),
         },
     )
     from cube_harness.meta_exploration.ledger import load_ledger
+
     ledger = load_ledger()
     assert "terminalbench2|task_a" in ledger
     assert "terminalbench2|task_b" in ledger
@@ -222,11 +255,15 @@ def test_stage_f_writes_per_task_entries(isolated_ledger) -> None:
 def test_stage_f_skipped_when_ledger_writes_disabled(isolated_ledger) -> None:
     opts = AutoCubeOptions(enable_ledger_writes=False)
     stage_f_write_ledger(
-        opts=opts, cube="cube", session_id="sid",
-        iter_idx=1, per_task_rewards={"a": 1.0},
+        opts=opts,
+        cube="cube",
+        session_id="sid",
+        iter_idx=1,
+        per_task_rewards={"a": 1.0},
         per_task_decisions={},
     )
     from cube_harness.meta_exploration.ledger import load_ledger
+
     assert load_ledger() == {}
 
 
@@ -235,11 +272,14 @@ def test_stage_f_records_inference_model_per_entry(isolated_ledger) -> None:
     'was this entry generated under the right model?'"""
     stage_f_write_ledger(
         opts=AutoCubeOptions(inference_model="azure/gpt-5"),
-        cube="cube", session_id="sid", iter_idx=1,
+        cube="cube",
+        session_id="sid",
+        iter_idx=1,
         per_task_rewards={"task_a": 0.5},
         per_task_decisions={},
     )
     from cube_harness.meta_exploration.ledger import load_ledger
+
     ledger = load_ledger()
     assert ledger["cube|task_a"].notes["inference_model"] == "azure/gpt-5"
 
@@ -307,12 +347,15 @@ def test_run_outer_loop_records_session_in_ledger(isolated_ledger, tmp_path) -> 
     during the run — lets a Mode C session correlate which sweep
     touched which task."""
     result = run_outer_loop(
-        opts=WEAK_NOOP, cube="cube", task_ids=["x"],
+        opts=WEAK_NOOP,
+        cube="cube",
+        task_ids=["x"],
         iterations=1,
         benchmark_config=None,
         output_dir=tmp_path / "r",
         runner=lambda tid, cfg: 1.0,
     )
     from cube_harness.meta_exploration.ledger import load_ledger
+
     ledger = load_ledger()
     assert ledger["cube|x"].last_session == result.session_id

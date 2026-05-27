@@ -3,7 +3,7 @@
 **Status:** branch in good shape, foundational architecture landed,
 specific algorithm wiring remaining. Read this top-to-bottom to pick up.
 
-**Date of handoff:** 2026-05-27
+**Date of handoff:** 2026-05-27 (refreshed after Tier 1 #1 refactor)
 **Branch:** `feat/meta-exploration` on `YangYongJin/cube-harness` (fork
 of `The-AI-Alliance/cube-harness`)
 **Tests:** 1068 passed, 7 skipped, 14 deselected — clean baseline.
@@ -27,14 +27,18 @@ cb722430 feat(meta-exploration): scaffold module + port ledger/router/promotion
 ### File layout
 
 ```
-src/cube_harness/meta_exploration/                # the module
+src/cube_harness/meta_exploration/                # use-case-specific module
 ├── __init__.py
 ├── ledger.py               # ~/auto_cube/hints.json — L2/L3/L4 taxonomy
 ├── recipe_router.py        # L1 dispatch heuristic
 ├── promotion.py            # Phase 1/2 candidate detection + re-test gate
-├── planner.py              # EpisodeConfig + per-task policy
-├── options.py              # AutoCubeOptions — ablation framework
-└── outer_loop_driver.py    # The unattended runner (v1: A+B+F wired)
+└── planner.py              # EpisodeConfig + per-task policy
+
+src/cube_harness/auto_cube/                       # universal Auto-CUBE infra
+├── options.py              # AutoCubeOptions — ablation framework (moved 2026-05-27)
+└── python_driver.py        # The Python-SDK unattended runner — pairs
+                            # with upstream `driver.py` (LLM-driven). v1:
+                            # A+B+F wired. (moved 2026-05-27)
 
 src/cube_harness/auto_cube/use_cases/meta_exploration/  # the use case
 ├── SKILL.md                # methodology spec (loaded as system prompt)
@@ -43,20 +47,20 @@ src/cube_harness/auto_cube/use_cases/meta_exploration/  # the use case
 ├── HANDOFF.md              # THIS FILE
 └── templates/exp_config.py # per-round Python config template
 
-tests/test_meta_exploration_{ledger,recipe_router,promotion,
-                             planner,options,outer_loop_driver}.py
+tests/test_meta_exploration_{ledger,recipe_router,promotion,planner}.py
+tests/test_auto_cube_{options,python_driver}.py
 ```
 
 ### Test counts per module
 
 | Module | Tests | Passing |
 |---|---|---|
-| ledger | 24 | ✅ |
-| recipe_router | 21 | ✅ |
-| promotion | 22 | ✅ |
-| planner | 22 | ✅ |
-| options | 25 | ✅ |
-| outer_loop_driver | 18 | ✅ |
+| ledger (`meta_exploration/`) | 24 | ✅ |
+| recipe_router (`meta_exploration/`) | 21 | ✅ |
+| promotion (`meta_exploration/`) | 22 | ✅ |
+| planner (`meta_exploration/`) | 22 | ✅ |
+| options (`auto_cube/`) | 25 | ✅ |
+| python_driver (`auto_cube/`) | 18 | ✅ |
 | **Total new** | **132** | ✅ |
 | Pre-existing cube-harness baseline | 936 | ✅ |
 | **Grand total** | **1068** | ✅ |
@@ -78,8 +82,8 @@ tests/test_meta_exploration_{ledger,recipe_router,promotion,
 
 `ESCALATE_MODEL` in the planner's menu uses `azure/gpt-5` (teacher).
 This would be cheating if it leaked into the headline number. The
-**honest-split guard** lives in [`options.py:assert_retest_uses_inference_model`](../../../meta_exploration/options.py)
-and is called from [`outer_loop_driver.py:stage_b_launch_episode`](../../../meta_exploration/outer_loop_driver.py)
+**honest-split guard** lives in [`auto_cube/options.py:assert_retest_uses_inference_model`](../../options.py)
+and is called from [`auto_cube/python_driver.py:stage_b_launch_episode`](../../python_driver.py)
 before any re-test episode launches. The Phase 2 promotion gate's
 verdicts are produced under `opts.inference_model` only — guaranteed
 by assertion, not by vibes.
@@ -122,14 +126,20 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
 
 ### Tier 1 — load-bearing for the pilot phase
 
-#### 1. **Architectural refactor — move orchestrator + options to `auto_cube/`** (~1.5 hrs)
-   - `meta_exploration/outer_loop_driver.py` → `auto_cube/orchestrator.py`
-     (it's not meta-exploration-specific; debug + hinter can use it too)
-   - `meta_exploration/options.py` → `auto_cube/options.py` (same — universal)
-   - Only `planner.py` stays in `meta_exploration/` — that's the actual
-     meta-exploration contribution
-   - Update imports + tests + this HANDOFF doc + DESIGN.md
-   - **Do early** — every follow-up file lands in the right home then.
+#### 1. ✅ **DONE (2026-05-27)** Architectural refactor
+   - `meta_exploration/outer_loop_driver.py` → `auto_cube/python_driver.py`
+     (renamed from `orchestrator.py` to pair with upstream PR #441's
+     LLM-driven `auto_cube/driver.py`)
+   - `meta_exploration/options.py` → `auto_cube/options.py`
+   - Tests moved: `tests/test_auto_cube_{options,python_driver}.py`
+   - Only `planner.py` + ledger / recipe_router / promotion stay in
+     `meta_exploration/` (they're use-case-specific)
+   - `auto_cube/options.py` imports `EpisodeConfig` + `EPISODE_CONFIG_MENU`
+     from `meta_exploration/planner.py` — cross-sibling import (the
+     `filter_menu_by_options` helper is logically tied to the menu).
+     If/when other use cases need a non-meta-exploration menu, factor
+     `filter_menu_by_options` back into `meta_exploration/` and keep
+     only the dataclass + recipes in `auto_cube/options.py`.
 
 #### 2. **MetaExplorationGennyConfig subclass** (Option B — see DESIGN.md §10 Q1) (~30 min)
    - File: `meta_exploration/agent_config.py` (new)
@@ -142,8 +152,7 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
      accepts the upstream RFC.
 
 #### 3. **Stage B episode runner — minimum viable** (~2-3 hrs)
-   - File: `outer_loop_driver.py:stage_b_launch_episode` (or wherever
-     after refactor)
+   - File: `auto_cube/python_driver.py:stage_b_launch_episode`
    - Translate `EpisodeConfig` → `MetaExplorationGennyConfig` (use
      the subclass; mechanical fields just pass through) →
      `Experiment(benchmark_config=, agent_config=).run()`.
@@ -156,7 +165,8 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
 #### 4. **Plan.json writer + minimal Stage F polish** (~30 min)
    - End of each iter: dump `dict[task_id, PlannerDecision]` to
      `output_dir/iter_<k>/plan.json`. Already designed; just needs
-     code in `orchestrator.py`. Critical for debugging the pilot runs.
+     code in `auto_cube/python_driver.py`. Critical for debugging the
+     pilot runs.
 
 #### 5. **Smoke runs** (~$2-5, half hour wall)
    - `weak_noop` and `combined` on 3-5 tasks, 1 iter, TB-2
@@ -188,7 +198,7 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
 ### Tier 3 — meta-exploration tests (conditional on Tier 2 outcome)
 
 #### 8. **Investigator-emitted ledger notes** (~2-3 hrs)
-   - File: `outer_loop_driver.py:stage_c_dispatch_investigator`
+   - File: `auto_cube/python_driver.py:stage_c_dispatch_investigator`
    - Wire to `cube_harness.analyze.investigator` (verify the
      callable interface first per Stage C contract docstring).
    - Populate ledger notes (`loop_pattern_suspected`,
@@ -196,7 +206,7 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
    - Without this, the planner's notes-based rules (5a, 5b) never fire.
 
 #### 9. **Stage D vanilla — text-hint authoring + exploration notes** (~3-4 hrs)
-   - File: `outer_loop_driver.py:stage_d_author_hints`
+   - File: `auto_cube/python_driver.py:stage_d_author_hints`
    - Aggregate text-hint candidates from Stage C findings; mutate
      `GennyConfig.task_hints`.
    - **NEW: also author exploration notes** (DESIGN.md §9) when
@@ -206,7 +216,7 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
      hint-injection mechanism.
 
 #### 10. **Stage E — Phase 2 promotion + re-test gate** (~4 hrs)
-   - File: `outer_loop_driver.py:stage_e_phase2_promotion`
+   - File: `auto_cube/python_driver.py:stage_e_phase2_promotion`
    - Detect candidates via
      `promotion.candidate_from_task_hints_overlap` (text path);
      similar function for config-knob candidates if needed.
@@ -238,7 +248,7 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
    - Reference: arXiv 2603.28052 + stanford-iris-lab/meta-harness
 
 #### 14. **Typer CLI entry point** (~1 hr)
-   - `python -m cube_harness.auto_cube.orchestrator --recipe combined ...`
+   - `python -m cube_harness.auto_cube.python_driver --recipe combined ...`
    - Thin wrapper following `scripts/experiments_report.py` conventions.
 
 #### 15. **Full 6-cell ablation sweep** (~$100-150, overnight)
@@ -316,8 +326,9 @@ uv run pytest tests/ -q --no-header \
     -m "not slow and not live_api and not integration"
 # Expect: 1068 passed, 7 skipped, 14 deselected
 
-# 5. Start at Tier-1 item #1 (Stage B episode runner). Reference:
-cat src/cube_harness/meta_exploration/outer_loop_driver.py | \
+# 5. Start at Tier-1 item #2 (item #1 — refactor — landed 2026-05-27).
+#    The next file to edit is auto_cube/python_driver.py:stage_b_launch_episode:
+cat src/cube_harness/auto_cube/python_driver.py | \
     grep -A 25 "def stage_b_launch_episode"
 ```
 

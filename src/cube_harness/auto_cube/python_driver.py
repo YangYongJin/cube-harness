@@ -25,7 +25,7 @@ the exact contract they need to satisfy when implemented.
 Once Stages C/D/E land, every ``AutoCubeOptions`` recipe in
 ``options.RUN_RECIPES`` will be runnable end-to-end from bash:
 
-    uv run python -m cube_harness.meta_exploration.outer_loop_driver \\
+    uv run python -m cube_harness.auto_cube.python_driver \\
         --recipe combined \\
         --benchmark terminalbench2 \\
         --iterations 3 \\
@@ -42,26 +42,23 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from cube_harness.meta_exploration.ledger import (
-    HintLedgerEntry,
-    load_ledger,
-    upsert_entry,
-)
-from cube_harness.meta_exploration.options import (
+from cube_harness.auto_cube.options import (
     AutoCubeOptions,
     assert_retest_uses_inference_model,
     filter_menu_by_options,
     validate_options,
 )
+from cube_harness.meta_exploration.ledger import (
+    load_ledger,
+    upsert_entry,
+)
 from cube_harness.meta_exploration.planner import (
     BASELINE,
-    EpisodeConfig,
     PlannerDecision,
     PlannerState,
     plan_iter,
     summarize_plan,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -171,17 +168,20 @@ def stage_a_plan_iter(
     # follow-up would have it accept a filtered menu. For v1 we rely on
     # validate_options + the menu-filter test rather than runtime
     # enforcement in the planner.
-    _ = filter_menu_by_options(opts)   # validates options indirectly
+    _ = filter_menu_by_options(opts)  # validates options indirectly
 
     state = _build_planner_state(
-        cube=cube, task_ids=task_ids, opts=opts,
+        cube=cube,
+        task_ids=task_ids,
+        opts=opts,
         recent_rewards=recent_rewards,
         budget_remaining_usd=budget_remaining_usd,
     )
     plan = plan_iter(task_ids, state)
     logger.info(
         "stage_a planned %d tasks; distribution=%s",
-        len(plan), summarize_plan(plan),
+        len(plan),
+        summarize_plan(plan),
     )
     return plan
 
@@ -196,8 +196,8 @@ def stage_b_launch_episode(
     opts: AutoCubeOptions,
     task_id: str,
     decision: PlannerDecision,
-    benchmark_config,   # cube.benchmark.BenchmarkConfig — typed loosely
-    runner=None,        # callable(task_id, config) -> reward; injectable for tests
+    benchmark_config,  # cube.benchmark.BenchmarkConfig — typed loosely
+    runner=None,  # callable(task_id, config) -> reward; injectable for tests
 ) -> float:
     """Stage B — launch one episode under the planner-picked config.
 
@@ -225,7 +225,9 @@ def stage_b_launch_episode(
     reward = runner(task_id, decision.config)
     logger.info(
         "stage_b launched task=%s config=%s reward=%.3f",
-        task_id, decision.config_name, reward,
+        task_id,
+        decision.config_name,
+        reward,
     )
     return reward
 
@@ -238,7 +240,7 @@ def stage_b_launch_episode(
 def stage_c_dispatch_investigator(
     *,
     opts: AutoCubeOptions,
-    trajectory,          # cube_harness.core.Trajectory
+    trajectory,  # cube_harness.core.Trajectory
     decision: PlannerDecision,
 ):
     """Stage C — per-trajectory Investigator dispatch (L1 routing).
@@ -264,16 +266,14 @@ def stage_c_dispatch_investigator(
     where Investigator-derived flags like ``loop_pattern_suspected``
     populate ``HintLedgerEntry.notes``).
     """
-    raise NotImplementedError(
-        "stage_c_dispatch_investigator: wiring deferred. See docstring §Contract."
-    )
+    raise NotImplementedError("stage_c_dispatch_investigator: wiring deferred. See docstring §Contract.")
 
 
 def stage_d_author_hints(
     *,
     opts: AutoCubeOptions,
-    per_task_findings: dict[str, object],   # task_id -> BaseFindings
-    agent_config,                            # GennyConfig to mutate
+    per_task_findings: dict[str, object],  # task_id -> BaseFindings
+    agent_config,  # GennyConfig to mutate
 ):
     """Stage D — aggregate text-hint candidates and mutate agent config.
 
@@ -295,9 +295,7 @@ def stage_d_author_hints(
     Output: mutated ``agent_config``; the iter's hint diff (used by
     Stage E candidate detection).
     """
-    raise NotImplementedError(
-        "stage_d_author_hints: wiring deferred. See docstring §Contract."
-    )
+    raise NotImplementedError("stage_d_author_hints: wiring deferred. See docstring §Contract.")
 
 
 def stage_e_phase2_promotion(
@@ -308,7 +306,7 @@ def stage_e_phase2_promotion(
     hints_before: dict[str, str],
     hints_after: dict[str, str],
     per_task_rewards: dict[str, float],
-    benchmark_config,    # for the held-out re-test subset
+    benchmark_config,  # for the held-out re-test subset
 ) -> list[object]:
     """Stage E — Phase 2 promotion + re-test gate.
 
@@ -340,9 +338,7 @@ def stage_e_phase2_promotion(
     Returns: list of ``PromoteVerdict`` objects (one per attempted
     promotion this iter). Empty when no candidates.
     """
-    raise NotImplementedError(
-        "stage_e_phase2_promotion: wiring deferred. See docstring §Contract."
-    )
+    raise NotImplementedError("stage_e_phase2_promotion: wiring deferred. See docstring §Contract.")
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +384,8 @@ def stage_f_write_ledger(
             )
         except Exception:
             logger.exception(
-                "ledger upsert failed for task=%s; continuing", task_id,
+                "ledger upsert failed for task=%s; continuing",
+                task_id,
             )
 
 
@@ -403,10 +400,10 @@ def run_outer_loop(
     cube: str,
     task_ids: list[str],
     iterations: int,
-    benchmark_config,                     # cube.benchmark.BenchmarkConfig
+    benchmark_config,  # cube.benchmark.BenchmarkConfig
     output_dir: Path,
     session_id: str | None = None,
-    runner=None,                          # injectable episode runner
+    runner=None,  # injectable episode runner
 ) -> MetaLoopResult:
     """The unattended outer-loop driver.
 
@@ -421,19 +418,23 @@ def run_outer_loop(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(
-        "outer_loop start: cube=%s session=%s iterations=%d "
-        "inference_model=%s",
-        cube, session_id, iterations, opts.inference_model,
+        "outer_loop start: cube=%s session=%s iterations=%d inference_model=%s",
+        cube,
+        session_id,
+        iterations,
+        opts.inference_model,
     )
 
     recent_rewards: dict[str, list[float]] = {tid: [] for tid in task_ids}
     iters: list[IterResult] = []
-    budget_remaining_usd = 1e9   # TODO: take from opts when budget knob lands
+    budget_remaining_usd = 1e9  # TODO: take from opts when budget knob lands
 
     for iter_idx in range(1, iterations + 1):
         # Stage A — plan per-task configs.
         plan = stage_a_plan_iter(
-            cube=cube, task_ids=task_ids, opts=opts,
+            cube=cube,
+            task_ids=task_ids,
+            opts=opts,
             recent_rewards=recent_rewards,
             budget_remaining_usd=budget_remaining_usd,
         )
@@ -444,8 +445,11 @@ def run_outer_loop(
             decision = plan[task_id]
             try:
                 reward = stage_b_launch_episode(
-                    opts=opts, task_id=task_id, decision=decision,
-                    benchmark_config=benchmark_config, runner=runner,
+                    opts=opts,
+                    task_id=task_id,
+                    decision=decision,
+                    benchmark_config=benchmark_config,
+                    runner=runner,
                 )
             except NotImplementedError:
                 # In v1 this is the expected path: Stage B's episode
@@ -463,8 +467,12 @@ def run_outer_loop(
         # based on opts.enable_l1_recipe_routing / enable_hint_authoring
         # / enable_{text,config}_promotion respectively.
         promotion_verdicts: list[object] = []
-        if opts.enable_l1_recipe_routing or opts.enable_hint_authoring or \
-           opts.enable_text_promotion or opts.enable_config_promotion:
+        if (
+            opts.enable_l1_recipe_routing
+            or opts.enable_hint_authoring
+            or opts.enable_text_promotion
+            or opts.enable_config_promotion
+        ):
             logger.warning(
                 "iter=%d: Stages C/D/E not yet wired (Pivot 7 next session); "
                 "options that depend on them are no-op this iter.",
@@ -473,20 +481,26 @@ def run_outer_loop(
 
         # Stage F — ledger writes.
         stage_f_write_ledger(
-            opts=opts, cube=cube, session_id=session_id,
-            iter_idx=iter_idx, per_task_rewards=per_task_rewards,
+            opts=opts,
+            cube=cube,
+            session_id=session_id,
+            iter_idx=iter_idx,
+            per_task_rewards=per_task_rewards,
             per_task_decisions=plan,
         )
 
-        iters.append(IterResult(
-            iter_idx=iter_idx,
-            plan=plan,
-            per_task_rewards=per_task_rewards,
-            promotion_verdicts=promotion_verdicts,
-        ))
+        iters.append(
+            IterResult(
+                iter_idx=iter_idx,
+                plan=plan,
+                per_task_rewards=per_task_rewards,
+                promotion_verdicts=promotion_verdicts,
+            )
+        )
         logger.info(
             "iter %d/%d complete; mean_reward=%.3f",
-            iter_idx, iterations,
+            iter_idx,
+            iterations,
             sum(per_task_rewards.values()) / max(len(per_task_rewards), 1),
         )
 

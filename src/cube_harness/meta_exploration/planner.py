@@ -44,7 +44,6 @@ from typing import Literal
 from cube_harness.meta_exploration.ledger import HintLedgerEntry
 from cube_harness.meta_exploration.recipe_router import Recipe
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -159,13 +158,13 @@ EPISODE_CONFIG_MENU: dict[str, EpisodeConfig] = {
 # Order-of-magnitude — refined empirically; not load-bearing for the
 # policy's correctness, only for "would this config blow the budget?"
 _APPROX_EPISODE_COST_USD: dict[str, float] = {
-    "BASELINE":              0.05,
-    "DIAGNOSE_PROFILING":  0.03,
-    "WIDEN_SEARCH":  0.15,
-    "ESCALATE_MODEL":         0.50,
-    "ENABLE_REFINER":      0.08,
-    "RETEST_PROMOTION":     0.05,
-    "EXTEND_TIMEOUT":      0.10,
+    "BASELINE": 0.05,
+    "DIAGNOSE_PROFILING": 0.03,
+    "WIDEN_SEARCH": 0.15,
+    "ESCALATE_MODEL": 0.50,
+    "ENABLE_REFINER": 0.08,
+    "RETEST_PROMOTION": 0.05,
+    "EXTEND_TIMEOUT": 0.10,
     "DIAGNOSE_SCAFFOLDING": 0.04,
 }
 
@@ -235,8 +234,8 @@ class PlannerDecision:
 
 
 _SUCCESS_THRESHOLD = 0.5
-_NEAR_MISS_LOWER = 0.0   # exclusive
-_NEAR_MISS_UPPER = 0.5   # exclusive
+_NEAR_MISS_LOWER = 0.0  # exclusive
+_NEAR_MISS_UPPER = 0.5  # exclusive
 
 
 def pick_episode_config(
@@ -334,8 +333,7 @@ def pick_episode_config(
             state,
             picked="DIAGNOSE_PROFILING",
             rationale=(
-                f"{n_attempts} attempts with all-zero rewards; "
-                f"cheap confirmation before committing to unsteerable."
+                f"{n_attempts} attempts with all-zero rewards; cheap confirmation before committing to unsteerable."
             ),
             info_value="unsteerable_confirmation",
             alternatives=_record(
@@ -352,10 +350,7 @@ def pick_episode_config(
             return _apply_budget_check(
                 state,
                 picked="DIAGNOSE_SCAFFOLDING",
-                rationale=(
-                    f"prior trajectory flagged loop pattern; "
-                    f"route to agent_scaffolding recipe + cheap config."
-                ),
+                rationale=("prior trajectory flagged loop pattern; route to agent_scaffolding recipe + cheap config."),
                 info_value="scaffolding_diagnosis",
                 alternatives=_record(
                     alternatives,
@@ -366,10 +361,7 @@ def pick_episode_config(
             return _apply_budget_check(
                 state,
                 picked="EXTEND_TIMEOUT",
-                rationale=(
-                    f"prior trajectory flagged build/install timeout; "
-                    f"bump bash default to 600s."
-                ),
+                rationale=("prior trajectory flagged build/install timeout; bump bash default to 600s."),
                 info_value="timeout_recovery",
                 alternatives=_record(
                     alternatives,
@@ -380,9 +372,9 @@ def pick_episode_config(
             state,
             picked="WIDEN_SEARCH",
             rationale=(
-                f"first failure with default config; broaden action "
-                f"sampling (k=3 + topk_branch) so hinter sees what the "
-                f"agent almost did."
+                "first failure with default config; broaden action "
+                "sampling (k=3 + topk_branch) so hinter sees what the "
+                "agent almost did."
             ),
             info_value="alternative_actions_surfaced",
             alternatives=_record(

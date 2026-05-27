@@ -21,7 +21,6 @@ from cube_harness.meta_exploration.promotion import (
     stable_id,
 )
 
-
 # ---------------------------------------------------------------------------
 # Mock config (avoids importing the full GennyConfig)
 # ---------------------------------------------------------------------------
@@ -152,13 +151,18 @@ def test_candidate_ids_stable_across_calls() -> None:
 
 def test_pick_held_out_excludes_affected() -> None:
     cand = PromotionCandidate(
-        candidate_id="x", rung="benchmark_hint_prompt", hint_text="t",
-        source_keys=[], affected_task_ids=["a", "b"], rationale="r",
+        candidate_id="x",
+        rung="benchmark_hint_prompt",
+        hint_text="t",
+        source_keys=[],
+        affected_task_ids=["a", "b"],
+        rationale="r",
     )
     held = pick_held_out(
         candidate=cand,
         per_task_rewards={"a": 0.0, "b": 0.0, "c": 0.0, "d": 0.0},
-        n_held_out=2, seed=42,
+        n_held_out=2,
+        seed=42,
     )
     assert set(held).isdisjoint({"a", "b"})
     assert len(held) == 2
@@ -166,33 +170,48 @@ def test_pick_held_out_excludes_affected() -> None:
 
 def test_pick_held_out_empty_pool_returns_empty() -> None:
     cand = PromotionCandidate(
-        candidate_id="x", rung="benchmark_hint_prompt", hint_text="t",
-        source_keys=[], affected_task_ids=["a", "b"], rationale="r",
+        candidate_id="x",
+        rung="benchmark_hint_prompt",
+        hint_text="t",
+        source_keys=[],
+        affected_task_ids=["a", "b"],
+        rationale="r",
     )
     held = pick_held_out(
-        candidate=cand, per_task_rewards={"a": 0.0, "b": 0.0},
-        n_held_out=3, seed=42,
+        candidate=cand,
+        per_task_rewards={"a": 0.0, "b": 0.0},
+        n_held_out=3,
+        seed=42,
     )
     assert held == []
 
 
 def test_pick_held_out_smaller_pool_returns_all() -> None:
     cand = PromotionCandidate(
-        candidate_id="x", rung="benchmark_hint_prompt", hint_text="t",
-        source_keys=[], affected_task_ids=["a"], rationale="r",
+        candidate_id="x",
+        rung="benchmark_hint_prompt",
+        hint_text="t",
+        source_keys=[],
+        affected_task_ids=["a"],
+        rationale="r",
     )
     held = pick_held_out(
         candidate=cand,
         per_task_rewards={"a": 0.0, "b": 0.0, "c": 0.0},
-        n_held_out=5, seed=42,
+        n_held_out=5,
+        seed=42,
     )
     assert set(held) == {"b", "c"}
 
 
 def test_pick_held_out_seed_reproducible() -> None:
     cand = PromotionCandidate(
-        candidate_id="x", rung="benchmark_hint_prompt", hint_text="t",
-        source_keys=[], affected_task_ids=["a"], rationale="r",
+        candidate_id="x",
+        rung="benchmark_hint_prompt",
+        hint_text="t",
+        source_keys=[],
+        affected_task_ids=["a"],
+        rationale="r",
     )
     pool = {f"task{i}": 0.0 for i in range(20)}
     pool["a"] = 0.0
@@ -210,8 +229,11 @@ def test_pick_held_out_seed_reproducible() -> None:
 
 def _cand(affected: list[str]) -> PromotionCandidate:
     return PromotionCandidate(
-        candidate_id="cand-x", rung="benchmark_hint_prompt",
-        hint_text="t", source_keys=[], affected_task_ids=affected,
+        candidate_id="cand-x",
+        rung="benchmark_hint_prompt",
+        hint_text="t",
+        source_keys=[],
+        affected_task_ids=affected,
         rationale="r",
     )
 
@@ -255,8 +277,10 @@ def test_verdict_held_out_regressed() -> None:
 def test_verdict_affected_regression_takes_precedence() -> None:
     v = decide_verdict(
         candidate=_cand(["a"]),
-        affected_pre={"a": 1.0}, affected_post={"a": 0.0},
-        held_out_pre={"c": 1.0}, held_out_post={"c": 0.0},
+        affected_pre={"a": 1.0},
+        affected_post={"a": 0.0},
+        held_out_pre={"c": 1.0},
+        held_out_post={"c": 0.0},
     )
     assert v.outcome == "affected_regressed"
 
@@ -264,8 +288,10 @@ def test_verdict_affected_regression_takes_precedence() -> None:
 def test_verdict_fail_to_fail_not_a_regression() -> None:
     v = decide_verdict(
         candidate=_cand(["a"]),
-        affected_pre={"a": 0.0}, affected_post={"a": 0.0},
-        held_out_pre={"c": 0.0}, held_out_post={"c": 0.0},
+        affected_pre={"a": 0.0},
+        affected_post={"a": 0.0},
+        held_out_pre={"c": 0.0},
+        held_out_post={"c": 0.0},
     )
     assert v.outcome == "ok"
 
@@ -294,8 +320,12 @@ def test_apply_benchmark_hint_prompt_appends_when_already_set() -> None:
 def test_apply_rejects_unimplemented_rung() -> None:
     cfg = _MockAgentConfig()
     cand = PromotionCandidate(
-        candidate_id="x", rung="task_clarification", hint_text="t",
-        source_keys=[], affected_task_ids=["a"], rationale="r",
+        candidate_id="x",
+        rung="task_clarification",
+        hint_text="t",
+        source_keys=[],
+        affected_task_ids=["a"],
+        rationale="r",
     )
     with pytest.raises(NotImplementedError, match="task_clarification"):
         apply_promotion_to_config(cfg, cand)

@@ -69,13 +69,17 @@ before proceeding.
 
 ## Immediate task
 
-**Start at HANDOFF.md §3 Tier 1 item #1** — the architectural refactor
-to move `outer_loop_driver.py` and `options.py` out of
-`meta_exploration/` and into `auto_cube/` where they belong (they're
-universal across use cases, not meta-exploration-specific). ~1.5 hrs.
+Tier 1 #1 (architectural refactor) **landed 2026-05-27** — driver +
+options now live at `auto_cube/python_driver.py` + `auto_cube/options.py`.
+(Renamed from the original `orchestrator.py` plan because upstream PR
+#441 shipped a separate `auto_cube/driver.py` — the LLM-driven sibling
+to our Python-SDK driver.)
 
-Then Tier 1 #2 (`MetaExplorationGennyConfig` subclass with the no-methods
-discipline test), then #3 (Stage B minimum viable runner), then #4 (plan.json
+**Start at HANDOFF.md §3 Tier 1 item #2** — the
+`MetaExplorationGennyConfig` subclass with the no-methods discipline
+test. ~30 min.
+
+Then Tier 1 #3 (Stage B minimum viable runner), then #4 (plan.json
 writer), then #5 (smoke run on 3-5 TB-2 tasks). Total Tier 1 ≈ 1 day.
 
 Do NOT skip ahead to Tier 3 (meta-exploration tests) before Tier 2
@@ -96,8 +100,8 @@ priorities should shift toward hint-quality work instead.
    answered Q1 (DESIGN.md §10). Don't push them into upstream
    `cube_harness/agents/` without explicit user sign-off + Alec RFC.
 4. **The honest training/inference assertion is load-bearing.**
-   `assert_retest_uses_inference_model` in `options.py` must fire
-   before any re-test episode launches. If you ever weaken or skip
+   `assert_retest_uses_inference_model` in `auto_cube/options.py` must
+   fire before any re-test episode launches. If you ever weaken or skip
    it, the entire research claim becomes invalid. See DESIGN.md §1.
 5. **NEW design questions need user sign-off, not silent decisions.**
    If you hit a branching architectural call not covered in DESIGN.md

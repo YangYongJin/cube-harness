@@ -4,22 +4,21 @@ from __future__ import annotations
 
 import pytest
 
-from cube_harness.meta_exploration.options import (
+from cube_harness.auto_cube.options import (
     COMBINED,
     HINTER_ONLY,
-    IncoherentOptionsError,
     META_EXPLORATION_ONLY,
     META_HARNESS,
     RUN_RECIPES,
     STRONG_NOOP,
     WEAK_NOOP,
     AutoCubeOptions,
+    IncoherentOptionsError,
     assert_retest_uses_inference_model,
     filter_menu_by_options,
     validate_options,
 )
 from cube_harness.meta_exploration.planner import EPISODE_CONFIG_MENU, EpisodeConfig
-
 
 # ---------------------------------------------------------------------------
 # Named recipes — pin the headline shapes
@@ -83,8 +82,12 @@ def test_combined_fires_both_axes() -> None:
 def test_run_recipes_registry_has_all_named_recipes() -> None:
     """Registry must contain the 6 ablation cells from DESIGN.md §2."""
     expected = {
-        "weak_noop", "strong_noop", "meta_harness",
-        "hinter_only", "meta_exploration_only", "combined",
+        "weak_noop",
+        "strong_noop",
+        "meta_harness",
+        "hinter_only",
+        "meta_exploration_only",
+        "combined",
     }
     assert set(RUN_RECIPES.keys()) == expected
 
@@ -181,9 +184,7 @@ def test_filter_menu_keeps_escalate_model_when_allowed() -> None:
 
 def test_filter_menu_size_matches_expectation() -> None:
     opts_disallow = AutoCubeOptions()  # default allow_model_escalation=False
-    opts_allow = AutoCubeOptions(
-        allow_model_escalation=True, enable_config_policy=True
-    )
+    opts_allow = AutoCubeOptions(allow_model_escalation=True, enable_config_policy=True)
     assert len(filter_menu_by_options(opts_disallow)) == len(EPISODE_CONFIG_MENU) - 1
     assert len(filter_menu_by_options(opts_allow)) == len(EPISODE_CONFIG_MENU)
 

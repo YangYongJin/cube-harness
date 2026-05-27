@@ -301,8 +301,8 @@ L1 dispatch and the planner.
 - Recipe router: [`../../../meta_exploration/recipe_router.py`](../../../meta_exploration/recipe_router.py)
 - Promotion gate: [`../../../meta_exploration/promotion.py`](../../../meta_exploration/promotion.py)
 - EpisodeConfig planner: [`../../../meta_exploration/planner.py`](../../../meta_exploration/planner.py)
-- AutoCubeOptions: [`../../../meta_exploration/options.py`](../../../meta_exploration/options.py) — will move to `../../options.py` per HANDOFF.md refactor
-- Outer-loop driver: [`../../../meta_exploration/outer_loop_driver.py`](../../../meta_exploration/outer_loop_driver.py) — will move to `../../orchestrator.py` per HANDOFF.md refactor
+- AutoCubeOptions: [`../../options.py`](../../options.py) (moved here from `meta_exploration/` 2026-05-27)
+- Python-SDK outer-loop driver: [`../../python_driver.py`](../../python_driver.py) (moved here 2026-05-27; pairs with upstream PR #441's LLM-driven `../../driver.py`)
 - Companion `hinter` use case: [`../hinter/SKILL.md`](../hinter/SKILL.md)
 - Auto-CUBE README: [`../../README.md`](../../README.md)
 - Meta-Harness paper: [arXiv 2603.28052](https://arxiv.org/abs/2603.28052)

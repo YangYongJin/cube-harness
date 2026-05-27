@@ -7,25 +7,18 @@ which rule fires + which alternatives get recorded.
 
 from __future__ import annotations
 
-import pytest
-
 from cube_harness.meta_exploration.ledger import HintLedgerEntry
 from cube_harness.meta_exploration.planner import (
     BASELINE,
     EPISODE_CONFIG_MENU,
-    WIDEN_SEARCH,
-    DIAGNOSE_PROFILING,
-    EXTEND_TIMEOUT,
-    PlannerDecision,
-    PlannerState,
-    RETEST_PROMOTION,
-    DIAGNOSE_SCAFFOLDING,
     ESCALATE_MODEL,
+    RETEST_PROMOTION,
+    WIDEN_SEARCH,
+    PlannerState,
     pick_episode_config,
     plan_iter,
     summarize_plan,
 )
-
 
 # ---------------------------------------------------------------------------
 # State builder
@@ -223,7 +216,7 @@ def test_budget_too_low_for_strong_model_downgrades_to_cap() -> None:
         "foo",
         _state(
             recent_rewards={"foo": [0.3]},  # would normally pick ESCALATE_MODEL
-            budget_remaining_usd=0.01,       # too low for $0.50
+            budget_remaining_usd=0.01,  # too low for $0.50
         ),
     )
     assert d.config_name == "DIAGNOSE_PROFILING"
@@ -265,8 +258,8 @@ def test_plan_iter_routes_each_task_independently() -> None:
     """Different per-task histories should yield different configs."""
     state = _state(
         recent_rewards={
-            "fresh": [],            # → BASELINE
-            "near": [0.3],          # → ESCALATE_MODEL
+            "fresh": [],  # → BASELINE
+            "near": [0.3],  # → ESCALATE_MODEL
             "stuck": [0.0, 0.0, 0.0],  # → DIAGNOSE_PROFILING
         }
     )
@@ -284,9 +277,10 @@ def test_plan_iter_routes_each_task_independently() -> None:
 def test_summarize_plan_counts_by_config_name() -> None:
     state = _state(
         recent_rewards={
-            "a": [], "b": [],         # both BASELINE
-            "c": [0.3],               # ESCALATE_MODEL
-            "d": [0.0, 0.0, 0.0],     # DIAGNOSE_PROFILING
+            "a": [],
+            "b": [],  # both BASELINE
+            "c": [0.3],  # ESCALATE_MODEL
+            "d": [0.0, 0.0, 0.0],  # DIAGNOSE_PROFILING
         }
     )
     plan = plan_iter(["a", "b", "c", "d"], state)
@@ -311,9 +305,16 @@ def test_every_menu_entry_is_unique_episode_config() -> None:
     """No two named configs should be identical — that's a menu bug."""
     seen = set()
     for name, cfg in EPISODE_CONFIG_MENU.items():
-        key = (cfg.model, cfg.k_candidates, cfg.k_plans, cfg.perturbations,
-               cfg.bash_default_timeout, cfg.investigator_recipe,
-               cfg.enable_refiner, cfg.apply_promotion)
+        key = (
+            cfg.model,
+            cfg.k_candidates,
+            cfg.k_plans,
+            cfg.perturbations,
+            cfg.bash_default_timeout,
+            cfg.investigator_recipe,
+            cfg.enable_refiner,
+            cfg.apply_promotion,
+        )
         assert key not in seen, f"{name} duplicates another menu entry"
         seen.add(key)
 
@@ -321,9 +322,14 @@ def test_every_menu_entry_is_unique_episode_config() -> None:
 def test_menu_includes_all_documented_configs() -> None:
     """SKILL.md promises these configs exist. Pin against drift."""
     required = {
-        "BASELINE", "WIDEN_SEARCH", "ESCALATE_MODEL",
-        "ENABLE_REFINER", "RETEST_PROMOTION", "DIAGNOSE_PROFILING",
-        "EXTEND_TIMEOUT", "DIAGNOSE_SCAFFOLDING",
+        "BASELINE",
+        "WIDEN_SEARCH",
+        "ESCALATE_MODEL",
+        "ENABLE_REFINER",
+        "RETEST_PROMOTION",
+        "DIAGNOSE_PROFILING",
+        "EXTEND_TIMEOUT",
+        "DIAGNOSE_SCAFFOLDING",
     }
     assert required.issubset(EPISODE_CONFIG_MENU.keys())
 

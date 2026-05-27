@@ -204,13 +204,16 @@ intervention axes and the full system uses both.
 
 ## Reference
 
-- Module: `src/cube_harness/meta_exploration/`
+- Use-case-specific module: `src/cube_harness/meta_exploration/`
 - Ledger format: `meta_exploration/ledger.py` docstring
 - Recipe router: `meta_exploration/recipe_router.py`
 - Promotion gate: `meta_exploration/promotion.py`
-- EpisodeConfig planner: `meta_exploration/planner.py` (Pivot 4 next)
-- AutoCubeOptions ablation menu: `meta_exploration/options.py` (Pivot 5)
-- Outer-loop SDK driver: TBD (Pivot 7)
+- EpisodeConfig planner: `meta_exploration/planner.py`
+- AutoCubeOptions ablation menu: `auto_cube/options.py` (universal —
+  the dataclass + 6 named recipes)
+- Python-SDK outer-loop driver: `auto_cube/python_driver.py` (universal —
+  pairs with upstream `auto_cube/driver.py` which is LLM-driven via the
+  Claude Code SDK)
 - Companion `hinter` use case: `auto_cube/use_cases/hinter/SKILL.md`
 - Meta-Harness baseline (paper arXiv 2603.28052): represented as a
   named subset of `AutoCubeOptions`

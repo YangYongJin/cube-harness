@@ -39,8 +39,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Literal
 
-from cube_harness.meta_exploration.ledger import PromotedTo, PROMOTED_TO_VALUES
-
+from cube_harness.meta_exploration.ledger import PROMOTED_TO_VALUES, PromotedTo
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +53,13 @@ logger = logging.getLogger(__name__)
 class PromotionCandidate:
     """One proposed promotion derived from the iter's hint diff."""
 
-    candidate_id: str          # stable id: <bench>:<rung>:<short-text-hash>
-    rung: PromotedTo           # which ladder rung (e.g. 'benchmark_hint_prompt')
-    hint_text: str             # the verbatim text that would be applied
-    source_keys: list[str]     # which 5-bucket keys this candidate aggregates
-                                # (e.g. ['SHARED_PATTERN[universal-pip-timeout]'])
+    candidate_id: str  # stable id: <bench>:<rung>:<short-text-hash>
+    rung: PromotedTo  # which ladder rung (e.g. 'benchmark_hint_prompt')
+    hint_text: str  # the verbatim text that would be applied
+    source_keys: list[str]  # which 5-bucket keys this candidate aggregates
+    # (e.g. ['SHARED_PATTERN[universal-pip-timeout]'])
     affected_task_ids: list[str]  # tasks the hint was scoped to (or all-tasks for wildcard)
-    rationale: str             # short human-readable explanation
+    rationale: str  # short human-readable explanation
 
 
 def stable_id(bench: str, rung: PromotedTo, hint_text: str) -> str:
@@ -114,7 +113,7 @@ def candidate_from_task_hints_overlap(
         if not clean:
             continue
         if before.get(tid, "").strip() == clean:
-            continue   # unchanged → not a fresh candidate
+            continue  # unchanged → not a fresh candidate
         text_to_tasks.setdefault(clean, []).append(tid)
 
     candidates: list[PromotionCandidate] = []
@@ -242,14 +241,14 @@ def decide_verdict(
 
     if affected_regressed:
         return PromoteVerdict(
-            candidate_id=candidate.candidate_id, outcome="affected_regressed",
+            candidate_id=candidate.candidate_id,
+            outcome="affected_regressed",
             rung=candidate.rung,
-            affected_pre_rewards=affected_pre, affected_post_rewards=affected_post,
-            held_out_pre_rewards=held_out_pre, held_out_post_rewards=held_out_post,
-            reason=(
-                f"{len(affected_regressed)} previously-passing affected task(s) "
-                f"regressed: {affected_regressed}"
-            ),
+            affected_pre_rewards=affected_pre,
+            affected_post_rewards=affected_post,
+            held_out_pre_rewards=held_out_pre,
+            held_out_post_rewards=held_out_post,
+            reason=(f"{len(affected_regressed)} previously-passing affected task(s) regressed: {affected_regressed}"),
         )
 
     # 2. Held-out: previously-passing tasks must stay passing.
@@ -260,22 +259,25 @@ def decide_verdict(
             held_out_regressed.append(tid)
     if held_out_regressed:
         return PromoteVerdict(
-            candidate_id=candidate.candidate_id, outcome="held_out_regressed",
+            candidate_id=candidate.candidate_id,
+            outcome="held_out_regressed",
             rung=candidate.rung,
-            affected_pre_rewards=affected_pre, affected_post_rewards=affected_post,
-            held_out_pre_rewards=held_out_pre, held_out_post_rewards=held_out_post,
-            reason=(
-                f"{len(held_out_regressed)} held-out task(s) regressed under "
-                f"promotion: {held_out_regressed}"
-            ),
+            affected_pre_rewards=affected_pre,
+            affected_post_rewards=affected_post,
+            held_out_pre_rewards=held_out_pre,
+            held_out_post_rewards=held_out_post,
+            reason=(f"{len(held_out_regressed)} held-out task(s) regressed under promotion: {held_out_regressed}"),
         )
 
     # PASS.
     return PromoteVerdict(
-        candidate_id=candidate.candidate_id, outcome="ok",
+        candidate_id=candidate.candidate_id,
+        outcome="ok",
         rung=candidate.rung,
-        affected_pre_rewards=affected_pre, affected_post_rewards=affected_post,
-        held_out_pre_rewards=held_out_pre, held_out_post_rewards=held_out_post,
+        affected_pre_rewards=affected_pre,
+        affected_post_rewards=affected_post,
+        held_out_pre_rewards=held_out_pre,
+        held_out_post_rewards=held_out_post,
         reason=(
             f"affected: no regressions; {len(affected_flipped_to_pass)} flipped to pass. "
             f"held_out ({len(held_out_pre)} tasks): no regressions."
@@ -289,7 +291,7 @@ def decide_verdict(
 
 
 def apply_promotion_to_config(
-    agent_config,   # GennyConfig (typed loosely to avoid the agents import here)
+    agent_config,  # GennyConfig (typed loosely to avoid the agents import here)
     candidate: PromotionCandidate,
 ) -> None:
     """Mutate ``agent_config`` IN-PLACE to apply the proposed promotion.
@@ -322,7 +324,7 @@ def apply_promotion_to_config(
 
 
 __all__ = [
-    "PROMOTED_TO_VALUES",      # re-exported for convenience
+    "PROMOTED_TO_VALUES",  # re-exported for convenience
     "PromoteOutcome",
     "PromoteVerdict",
     "PromotionCandidate",
