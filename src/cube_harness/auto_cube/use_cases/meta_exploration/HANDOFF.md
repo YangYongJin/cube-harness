@@ -214,33 +214,57 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
    - Once the smoke goes green, Tier 1 is fully validated end-to-end
      and Tier 2 (scaling experiments) can begin.
 
-### Tier 2 — scaling experiments (the load-bearing scientific question)
+### Tier 2 — AutoCube scaling experiments (the load-bearing scientific question)
 
-#### 6. **Uniform-config scaling sweep** (~$20-50, depending on scope)
-   - **Code scaffolded (2026-05-27):**
-     [`scripts/auto_cube/scaling_sweep.py`](../../../../../scripts/auto_cube/scaling_sweep.py).
-     Defaults to `--dry-run` (prints episode-count estimate). `--execute`
-     actually launches.
-   - Goal: answer "is exploration the bottleneck?"
-   - Hold config fixed (e.g. `weak_noop` recipe). Per
-     `(max_steps, replicas)` cell, launches `replicas` independent
-     `Experiment` runs (no built-in replica knob on `Experiment` —
-     correction to HANDOFF v1 which said one existed; we use unique
-     `output_dir` + `name` per replica instead).
-   - Sweep dimensions:
-     - `--max-steps-values` (default `100,200,400`)
-     - `--replicas-values` (default `1,3,5,10`) → up to 19 replicas/task
-   - Outputs per `~/auto_cube/scaling_sweeps/<session>/`:
-     - `ms<N>_rep<R>/replica_<i>/...` — per-Experiment artefacts
-     - `ms<N>_rep<R>/cell.json` — per-cell stats (mean reward, win rate)
-     - `rewards_long.csv` — tidy long-format for analysis
-     - `sweep_report.md` — markdown matrix + interpretation guide
-   - **Decision criterion for meta-exploration:** see report's
-     "Interpretation" section. Plateau → deprioritize meta-exploration
-     (route to Tier 4 hint quality); climbing → proceed to Tier 3.
-   - Default-scope dry-run shows: **171 episodes** (3 max-steps × 19
-     replicas-sum × 3 tasks). Pilot variant (`--max-steps-values
-     100,200 --replicas-values 1,3`): 24 episodes.
+**Corrected definition (2026-05-27 evening).** Earlier HANDOFF drafts
+described "scaling" as varying `max_steps × replicas` inside
+`Experiment.run()` to ask *"is exploration the bottleneck?"* That
+question is at the wrong layer — it tests pure cube-harness's compute
+absorption, not the **meta-agent's** ability to leverage exploration.
+
+**The real Tier 2 question:** *Does the AutoCube meta-agent (LLM-driven
+outer loop with the hinter use case) produce better hints — and thus
+better next-iter scores — when we give it more episodes per task per
+iteration?*
+
+Two cells of the same experiment:
+1. **Baseline:** N=1 episode per task per iteration, 3 iterations,
+   AutoCube + hinter use case.
+2. **4x scaling:** N=4 episodes per task per iteration, 3 iterations,
+   same use case.
+
+If 4x produces meaningfully better hints / scores than 1x → the
+meta-agent IS bottlenecked on episode count, and meta-exploration's
+per-episode-config policy has headroom. If they tie → the meta-agent
+already saturates with 1 episode/task/iter, and meta-exploration is
+speculative (route effort toward hint quality instead).
+
+#### 6. **Cell 1 — AutoCube + hinter baseline** (~scope TBD)
+   - **Driver:** upstream `auto_cube/driver.py` (LLM-as-orchestrator,
+     PR #441 — landed in this branch via rebase 2026-05-27 evening)
+   - **Use case:** `hinter` (`auto_cube/use_cases/hinter/SKILL.md`)
+   - **Benchmarks:** light variants from prior PGEPA convention —
+     - TB-2: 16-task train + 16-task held-out
+     - miniwob: 50-task train + 50-task held-out
+   - **Iters:** 3
+   - **Episodes per task per iter:** 1 (baseline)
+   - **One seed**
+   - The orchestrator is told the constraints via the `--objective`
+     string passed to `ch-auto-cube`; Claude writes per-round
+     `exp_config.py` files honoring them.
+
+#### 7. **Cell 2 — 4x episode scaling** (deferred until Cell 1 lands)
+   - Same as Cell 1 except episodes per task per iter = 4.
+   - Run only after Cell 1 produces a baseline number.
+   - Decision criterion: 4x cell win-rate ≥ baseline + 2σ → AutoCube
+     leverages extra exploration → proceed with meta-exploration work.
+     Otherwise: deprioritize meta-exploration, route to Tier 4.
+
+**Killed scaffold note:** the earlier
+`scripts/auto_cube/scaling_sweep.py` was built for the wrong scaling
+definition (Experiment-level max_steps × replicas). Keeping it on
+disk as scaffolding for if we ever want that layer-(a) baseline
+question answered, but it is NOT what Tier 2 above measures.
 
 #### 7. **Few-seed runs of the same scaling sweep** (~$50-100)
    - 3-5 seeds to bracket the noise band.

@@ -257,6 +257,32 @@ that don't generalize get filtered out.
 `combined` because GPT-5 alone has no info about *the base agent's*
 failure patterns; PGEPA hints encode that agent-specific info.
 
+### 2026-05-27 evening — "scaling" reframed
+
+**Q: what is the load-bearing Tier-2 scaling question?**
+**A:** Earlier drafts conflated two layers. The real question is at the
+**meta-agent layer**, not the `Experiment.run()` layer:
+
+> Does the AutoCube outer loop (with the hinter use case) produce
+> better hints — and thus better next-iter scores — when we give it
+> more episodes per task per iteration?
+
+Concretely the cells are:
+- 1 episode/task/iter × 3 iters (baseline)
+- 4 episodes/task/iter × 3 iters (4x scaling)
+
+Both on TB-2 (16/16) and miniwob (50/50), one seed.
+
+What this does NOT mean: varying `Experiment.max_steps` × `replicas`
+of a single fixed config (the layer-(a) "is exploration the
+bottleneck" question). That's a pure cube-harness scaling test, not
+an AutoCube test.
+
+If 4x meaningfully beats 1x → AutoCube can leverage extra exploration
+→ meta-exploration has headroom. If they tie → AutoCube saturates with
+1 episode/task/iter and meta-exploration's per-episode-config policy
+is speculative (route to hint quality / Tier 4 instead).
+
 **Q: naming is inconsistent?**
 **A:** Yes — renaming to verb-first action-oriented form (see §5).
 
