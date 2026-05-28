@@ -152,14 +152,20 @@ def _run_one_group(
         "running group %s tasks=%s model=%s", _short_key(episode_config), task_ids, agent_config.llm_config.model_name
     )
     result = run_sequentially(exp)
-    rewards: dict[str, float] = {}
-    for task_id in task_ids:
-        traj = result.trajectories.get(task_id)
-        if traj is None:
-            logger.warning("no trajectory for task %s (group failure?); reward=0", task_id)
-            rewards[task_id] = 0.0
+    # result.trajectories is keyed by `{task_id}_ep{episode_id}`, not bare
+    # task_id — re-key via traj.metadata["task_id"] which carries the raw id.
+    rewards: dict[str, float] = dict.fromkeys(task_ids, 0.0)
+    observed: set[str] = set()
+    for traj_id, traj in result.trajectories.items():
+        bare_task_id = traj.metadata.get("task_id", traj_id)
+        if bare_task_id not in rewards:
+            logger.warning("unexpected trajectory for task %s (traj_id=%s)", bare_task_id, traj_id)
             continue
-        rewards[task_id] = float(traj.reward_info.get("reward", 0.0))
+        rewards[bare_task_id] = float(traj.reward_info.get("reward", 0.0))
+        observed.add(bare_task_id)
+    for tid in rewards:
+        if tid not in observed:
+            logger.warning("no trajectory for task %s (group failure?); reward=0", tid)
     return rewards
 
 
