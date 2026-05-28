@@ -30,7 +30,8 @@ Wall-clock: hours, not minutes.
 
 Auto-skips when:
   - the ``terminalbench2_cube`` package is not importable, or
-  - neither ``AZURE_OPENAI_API_KEY`` nor ``OPENAI_API_KEY`` is set.
+  - no LLM provider key is found in env or ``.env``
+    (``AZURE_API_KEY`` / ``OPENAI_API_KEY`` / ``ANTHROPIC_API_KEY``).
 
 Usage:
     # Dry-run (default) — print the cells and estimated episode count:
@@ -64,11 +65,16 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from dotenv import load_dotenv
 
 from cube_harness.auto_cube.options import RUN_RECIPES
 from cube_harness.auto_cube.python_driver import make_session_id
 from cube_harness.llm import LLMConfig
 from cube_harness.meta_exploration.agent_config import MetaExplorationGennyConfig
+
+# Same .env auto-load posture as the smoke — see
+# scripts/smoke/auto_cube_meta_exploration.py for the override=True rationale.
+load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 
@@ -98,11 +104,14 @@ def _print_fail(reason: str) -> None:
     print(f"SWEEP FAIL: {_SWEEP_NAME}")
 
 
+_LLM_KEY_ENV_VARS = ("AZURE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+
+
 def _check_prereqs() -> str | None:
     if importlib.util.find_spec("terminalbench2_cube") is None:
         return "terminalbench2_cube not importable; install cubes/terminalbench2-cube"
-    if not (os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")):
-        return "neither AZURE_OPENAI_API_KEY nor OPENAI_API_KEY is set"
+    if not any(os.environ.get(k) for k in _LLM_KEY_ENV_VARS):
+        return f"no LLM key in env or .env (need one of {list(_LLM_KEY_ENV_VARS)})"
     return None
 
 

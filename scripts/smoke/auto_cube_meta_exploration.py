@@ -26,7 +26,8 @@ follow-up.
 Auto-skips when:
   - the ``terminalbench2_cube`` package is not importable (the smoke
     needs the local TB-2 cube installed), or
-  - neither ``AZURE_OPENAI_API_KEY`` nor ``OPENAI_API_KEY`` is set.
+  - no LLM provider key is found in env or ``.env``
+    (``AZURE_API_KEY`` / ``OPENAI_API_KEY`` / ``ANTHROPIC_API_KEY``).
 
 Usage:
     uv run scripts/smoke/auto_cube_meta_exploration.py             # DRY-RUN (default)
@@ -51,6 +52,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from dotenv import load_dotenv
 
 from cube_harness.auto_cube.options import RUN_RECIPES, AutoCubeOptions, validate_options
 from cube_harness.auto_cube.python_driver import (
@@ -63,6 +65,12 @@ from cube_harness.auto_cube.python_driver import (
 from cube_harness.llm import LLMConfig
 from cube_harness.meta_exploration.agent_config import MetaExplorationGennyConfig
 from cube_harness.meta_exploration.planner import EpisodeConfig, PlannerDecision
+
+# Load repo-root `.env` ASAP after imports so LiteLLM sees the keys at
+# call time. ``override=True`` because a parent shell often exports an
+# *empty* value (e.g. ``export ANTHROPIC_API_KEY=""``) which is enough
+# to make ``load_dotenv()``'s default override=False skip it.
+load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +93,20 @@ def _print_fail(reason: str) -> None:
     print(f"SMOKE FAIL: {_SMOKE_NAME}")
 
 
+_LLM_KEY_ENV_VARS = ("AZURE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+
+
 def _check_prereqs() -> str | None:
-    """Returns a reason-to-skip string, or None if the smoke can run."""
+    """Returns a reason-to-skip string, or None if the smoke can run.
+
+    Accepts any LiteLLM-supported provider key — the actual model is
+    chosen via ``--model``, so being model-agnostic at the prereq layer
+    keeps the smoke usable with Azure / OpenAI / Anthropic creds alike.
+    """
     if importlib.util.find_spec("terminalbench2_cube") is None:
         return "terminalbench2_cube not importable; install cubes/terminalbench2-cube"
-    if not (os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")):
-        return "neither AZURE_OPENAI_API_KEY nor OPENAI_API_KEY is set"
+    if not any(os.environ.get(k) for k in _LLM_KEY_ENV_VARS):
+        return f"no LLM key in env or .env (need one of {list(_LLM_KEY_ENV_VARS)})"
     return None
 
 
