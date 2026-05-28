@@ -217,18 +217,30 @@ This shifts what's Tier 1 vs Tier 2 vs Tier 3.
 ### Tier 2 — scaling experiments (the load-bearing scientific question)
 
 #### 6. **Uniform-config scaling sweep** (~$20-50, depending on scope)
+   - **Code scaffolded (2026-05-27):**
+     [`scripts/auto_cube/scaling_sweep.py`](../../../../../scripts/auto_cube/scaling_sweep.py).
+     Defaults to `--dry-run` (prints episode-count estimate). `--execute`
+     actually launches.
    - Goal: answer "is exploration the bottleneck?"
-   - Hold config fixed (e.g. `weak_noop` recipe); vary compute via
-     `experiences_per_task` (1 / 3 / 5 / 10) and `max_steps`
-     (100 / 200 / 400) — both knobs already in cube-harness's
-     `Experiment` config.
-   - Measure: per-task win-rate as a function of compute budget.
-   - **Decision criterion for meta-exploration**:
-     - If win-rate plateaus quickly (e.g. no improvement from 3→10
-       replicas) → exploration ISN'T the bottleneck → meta-exploration
-       deprioritized; investigate hint quality (Tier 4) instead.
-     - If win-rate keeps improving with more replicas/steps → exploration
-       IS the bottleneck → proceed to Tier 3 meta-exploration tests.
+   - Hold config fixed (e.g. `weak_noop` recipe). Per
+     `(max_steps, replicas)` cell, launches `replicas` independent
+     `Experiment` runs (no built-in replica knob on `Experiment` —
+     correction to HANDOFF v1 which said one existed; we use unique
+     `output_dir` + `name` per replica instead).
+   - Sweep dimensions:
+     - `--max-steps-values` (default `100,200,400`)
+     - `--replicas-values` (default `1,3,5,10`) → up to 19 replicas/task
+   - Outputs per `~/auto_cube/scaling_sweeps/<session>/`:
+     - `ms<N>_rep<R>/replica_<i>/...` — per-Experiment artefacts
+     - `ms<N>_rep<R>/cell.json` — per-cell stats (mean reward, win rate)
+     - `rewards_long.csv` — tidy long-format for analysis
+     - `sweep_report.md` — markdown matrix + interpretation guide
+   - **Decision criterion for meta-exploration:** see report's
+     "Interpretation" section. Plateau → deprioritize meta-exploration
+     (route to Tier 4 hint quality); climbing → proceed to Tier 3.
+   - Default-scope dry-run shows: **171 episodes** (3 max-steps × 19
+     replicas-sum × 3 tasks). Pilot variant (`--max-steps-values
+     100,200 --replicas-values 1,3`): 24 episodes.
 
 #### 7. **Few-seed runs of the same scaling sweep** (~$50-100)
    - 3-5 seeds to bracket the noise band.

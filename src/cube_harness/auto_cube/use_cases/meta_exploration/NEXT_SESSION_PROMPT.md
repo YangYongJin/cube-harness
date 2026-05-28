@@ -90,12 +90,24 @@ uv run scripts/smoke/auto_cube_meta_exploration.py --execute --recipe combined
 ```
 
 If the smoke goes green, Tier 1 is fully validated end-to-end and you
-can move to **Tier 2 — scaling experiments** (HANDOFF.md §3 Tier 2 #6).
-The scaling sweep answers the load-bearing question: *is exploration
-actually the bottleneck?* If uniform extra compute on more episodes /
-longer rollouts saturates win-rate quickly, meta-exploration is
-speculative and priorities shift to hint-quality work (Tier 4)
-instead of Tier 3 (algorithm ports).
+can move to **Tier 2 — scaling experiments**. The script for that is
+also code-ready:
+
+```bash
+# Cheap pilot first (24 episodes):
+uv run scripts/auto_cube/scaling_sweep.py --execute \
+    --max-steps-values 100,200 --replicas-values 1,3 \
+    --task-ids fix-git,overfull-hbox
+
+# Full sweep (~171 episodes, $20-50):
+uv run scripts/auto_cube/scaling_sweep.py --execute
+```
+
+The sweep writes `~/auto_cube/scaling_sweeps/<session>/sweep_report.md`
+with a per-cell win-rate matrix. The "Interpretation" section spells
+out the go/no-go: plateau → deprioritize meta-exploration (Tier 4
+hint quality); climbing → proceed to Tier 3 (algorithm ports +
+meta-exploration tests).
 
 Do NOT skip ahead to Tier 3 (meta-exploration tests) before Tier 2
 (scaling experiments) tells us whether exploration is actually the
