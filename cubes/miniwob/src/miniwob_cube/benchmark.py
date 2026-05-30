@@ -110,10 +110,15 @@ class MiniWobBenchmarkConfig(BenchmarkConfig[MiniWobTaskMetadata]):
 
     def get_task_configs(self) -> Generator[MiniWobTaskConfig, None, None]:
         for tm in self.tasks().values():
-            yield MiniWobTaskConfig(
-                metadata=tm,
-                tool_config=self.tool_config,
-                base_url=self.base_url,
-                remove_human_display=self.remove_human_display,
-                episode_max_time=self.episode_max_time,
-            )
+            # Honor seed_generator (one config per seed) so callers can request
+            # multiple distinct instances per task; None -> single legacy instance.
+            seeds = self.seed_generator(tm) if self.seed_generator is not None else [None]
+            for seed in seeds:
+                yield MiniWobTaskConfig(
+                    metadata=tm,
+                    seed=seed,
+                    tool_config=self.tool_config,
+                    base_url=self.base_url,
+                    remove_human_display=self.remove_human_display,
+                    episode_max_time=self.episode_max_time,
+                )

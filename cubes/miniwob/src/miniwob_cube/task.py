@@ -24,6 +24,7 @@ class MiniWobTask(Task):
     base_url: str = "http://localhost:8000/miniwob"
     remove_human_display: bool = True
     episode_max_time: int = 1000000
+    seed: int | None = None  # per-episode instance seed (None -> legacy fixed 42)
 
     @property
     def tool(self) -> BrowserTool:  # type: ignore[override]
@@ -36,7 +37,7 @@ class MiniWobTask(Task):
     def reset(self) -> tuple[Observation, dict[str, Any]]:
         self.tool.reset()
         self.tool.goto(self.url)
-        setup_result = self.tool.evaluate_js(_build_setup_js(self.remove_human_display, self.episode_max_time))
+        setup_result = self.tool.evaluate_js(_build_setup_js(self.remove_human_display, self.episode_max_time, self.seed))
         goal, info = _parse_setup_result(setup_result)
         obs = Observation.from_text(goal) + self.obs_postprocess(self.tool.page_obs())
         return obs, {**info, "task_id": self.id, "task_url": self.url, "goal": goal}
@@ -78,10 +79,11 @@ class MiniWobTaskConfig(TaskConfig[MiniWobTaskMetadata]):
             base_url=self.base_url,
             remove_human_display=self.remove_human_display,
             episode_max_time=self.episode_max_time,
+            seed=self.seed,
         )
 
 
-def _build_setup_js(remove_human_display: bool, episode_max_time: int) -> str:
+def _build_setup_js(remove_human_display: bool, episode_max_time: int, seed: int | None = None) -> str:
     if remove_human_display:
         js = r"""
 let __display_ids = ['reward-display', 'click-canvas', 'sync-task-cover'];
@@ -141,7 +143,7 @@ removeDisplay();
     else:
         js = ""
     js += f"""
-Math.seedrandom(42);
+Math.seedrandom({seed if seed is not None else 42});
 core.EPISODE_MAX_TIME = {episode_max_time};
 core.startEpisodeReal();
 while (!WOB_TASK_READY) {{
