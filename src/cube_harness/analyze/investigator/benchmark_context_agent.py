@@ -27,7 +27,14 @@ from cube_harness.analyze.investigator.context import _PATHS_FENCE_RE, INVESTIGA
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONTEXT_MODEL = "claude-opus-4-7"
+# Unified meta-agent model: the benchmark-context-agent runs through the same
+# ClaudeCodeSDKDriver as the per-episode investigator and the synthesis agent,
+# and now defaults to the same cheap model (haiku) rather than Opus. Rationale:
+# hint quality is already capped by the haiku investigator/synthesis, so a haiku
+# codebase-map is consistent with the rest of Stage C and removes the costliest
+# single call in the batch. (Was "claude-opus-4-7"; the "expensive once, cheap
+# many times" split is dropped in favour of one uniform meta-agent model.)
+DEFAULT_CONTEXT_MODEL = "claude-haiku-4-5"
 
 # Hard wall-clock bound on the context sub-agent. The agent has Bash and can
 # issue a command that blocks indefinitely (a filesystem-wide `find` on a dev

@@ -26,7 +26,7 @@ from typing import Annotated
 import typer
 
 from cube_harness.analyze.investigator.agent_driver import AgentDriver, ClaudeCodeSDKDriver, TerminalClaudeDriver
-from cube_harness.analyze.investigator.benchmark_context_agent import generate_context_file
+from cube_harness.analyze.investigator.benchmark_context_agent import DEFAULT_CONTEXT_MODEL, generate_context_file
 from cube_harness.analyze.investigator.core import InvestigationConfig, investigate_experiment
 from cube_harness.analyze.investigator.recipe import InvestigatorRecipe
 from cube_harness.analyze.investigator.use_cases import RECIPE_CATALOG
@@ -140,6 +140,18 @@ def run_cmd(
             ),
         ),
     ] = None,
+    context_map: Annotated[
+        bool,
+        typer.Option(
+            "--context-map/--no-context-map",
+            help=(
+                "Build the shared codebase map via the benchmark-context-agent "
+                "(default on). --no-context-map skips that agent entirely; each "
+                "investigator runs from the transcript, exploring on demand with "
+                "Read/Grep/Bash. Removes the costliest call and the only hang-prone step."
+            ),
+        ),
+    ] = True,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Stream tool calls + text to stderr.")] = False,
 ) -> None:
     """Batch-investigate episodes in an experiment directory.
@@ -182,6 +194,7 @@ def run_cmd(
         journal_dir=journal_dir,
         extra_prompt_fragment=extra_prompt_fragment,
         context_dir=context_dir,
+        build_context_map=context_map,
     )
     results = investigate_experiment(path, config)
     _print_summary_table(results)
@@ -191,7 +204,7 @@ def run_cmd(
 def init_context_cmd(
     experiment_dir: Annotated[Path, typer.Argument(help="Experiment directory.")],
     driver: Annotated[str, typer.Option(help="Driver to invoke the context agent through.")] = "claude-code-sdk",
-    model: Annotated[str, typer.Option(help="Model name for the context agent.")] = "claude-opus-4-7",
+    model: Annotated[str, typer.Option(help="Model name for the context agent.")] = DEFAULT_CONTEXT_MODEL,
     verbose: Annotated[bool, typer.Option("-v", "--verbose")] = False,
 ) -> None:
     """Invoke the benchmark-context sub-agent to (re)generate investigation_context.md."""

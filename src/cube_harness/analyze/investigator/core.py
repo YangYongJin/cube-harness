@@ -132,6 +132,13 @@ class InvestigationConfig(TypedBaseModel):
     # installed code.
     context_dir: Path | None = None
 
+    # When False, skip the benchmark-context-agent entirely: no codebase map is
+    # built or read, and each per-episode investigator runs "from transcript
+    # only" (it still has Read/Grep/Bash to explore on demand). Removes the
+    # costliest call in the batch and the only step that can hang on a runaway
+    # shell command — at the cost of the shared codebase orientation.
+    build_context_map: bool = True
+
 
 def _load_trajectory_meta(path: Path) -> Trajectory | None:
     """Load episode.metadata.json as a Trajectory. The `steps` field will be empty
@@ -262,8 +269,14 @@ async def _investigate_episode_impl(
     all_refs: list[EpisodeRef] | None = None,
     extra_prompt_fragment: str | None = None,
     context_dir: Path | None = None,
+    build_context_map: bool = True,
 ) -> tuple[BaseFindings, InvestigationMetadata, list[ToolAction], DriverResult, float]:
-    """Async core shared by investigate_episode (single) and investigate_experiment (parallel)."""
+    """Async core shared by investigate_episode (single) and investigate_experiment (parallel).
+
+    `build_context_map=False` skips the benchmark-context-agent entirely: no
+    `investigation_context.md` is generated or read, and the investigator runs
+    "from transcript only" (it still has Read/Grep/Bash to explore on demand).
+    """
     transcript_dir = episode_dir / "_investigation_transcript"
     extract_transcript(episode_dir, transcript_dir)
 
@@ -282,11 +295,15 @@ async def _investigate_episode_impl(
     else:
         task_id, reward, total_steps, task_description = "unknown", None, None, ""
 
-    context_path = await _ensure_context_file(
-        experiment_dir, driver, context_dir=context_dir, benchmark_dotted=view.benchmark_dotted
-    )
-    source_paths = validate_context_file(context_path)  # parsed paths → additional_dirs (read access)
-    context_markdown = context_path.read_text()  # full map → injected into the prompt
+    if build_context_map:
+        context_path = await _ensure_context_file(
+            experiment_dir, driver, context_dir=context_dir, benchmark_dotted=view.benchmark_dotted
+        )
+        source_paths = validate_context_file(context_path)  # parsed paths → additional_dirs (read access)
+        context_markdown = context_path.read_text()  # full map → injected into the prompt
+    else:
+        source_paths = {}  # same shape as validate_context_file() → consumed via .values()
+        context_markdown = ""  # → _build_user_prompt emits the "(no codebase map …)" fallback
 
     related_paths: list[Path] = []
     if selector is not None:
@@ -536,6 +553,7 @@ def investigate_experiment(
             all_refs=refs,
             extra_prompt_fragment=cfg.extra_prompt_fragment,
             context_dir=cfg.context_dir,
+            build_context_map=cfg.build_context_map,
         )
     )
 
@@ -595,6 +613,7 @@ async def _investigate_experiment_async(
     all_refs: list[EpisodeRef],
     extra_prompt_fragment: str | None = None,
     context_dir: Path | None = None,
+    build_context_map: bool = True,
 ) -> dict[str, tuple[BaseFindings, InvestigationMetadata]]:
     """Run the investigator across `selected` × `n_seeds`, bounded by `n_parallel`."""
     semaphore = asyncio.Semaphore(n_parallel)
@@ -604,17 +623,19 @@ async def _investigate_experiment_async(
     # Build the shared investigation-context map exactly once, before fanning
     # out. `_ensure_context_file` is check-then-act; with a cold cache and
     # n_parallel>1, every episode worker would otherwise see "not cached" and
-    # invoke the (Opus) benchmark-context-agent for the *same* file — N
-    # concurrent builds, N-1 wasted (the costliest call in the batch). A single
-    # awaited pre-build makes every per-episode call an idempotent cache hit.
+    # invoke the benchmark-context-agent for the *same* file — N concurrent
+    # builds, N-1 wasted (the costliest call in the batch). A single awaited
+    # pre-build makes every per-episode call an idempotent cache hit.
     # Best-effort: on failure, fall back to the per-episode build (status quo).
-    try:
-        _view = _load_experiment_view(experiment_dir / "experiment_config.json")
-        await _ensure_context_file(
-            experiment_dir, driver, context_dir=context_dir, benchmark_dotted=_view.benchmark_dotted
-        )
-    except Exception as e:  # noqa: BLE001 — pre-warm must never break the batch
-        logger.warning("Context-map pre-build skipped (%s); per-episode build will run.", e)
+    # Skipped entirely when build_context_map=False (no map → nothing to build).
+    if build_context_map:
+        try:
+            _view = _load_experiment_view(experiment_dir / "experiment_config.json")
+            await _ensure_context_file(
+                experiment_dir, driver, context_dir=context_dir, benchmark_dotted=_view.benchmark_dotted
+            )
+        except Exception as e:  # noqa: BLE001 — pre-warm must never break the batch
+            logger.warning("Context-map pre-build skipped (%s); per-episode build will run.", e)
     # /auto-fix(451)
 
     async def _one(ref: EpisodeRef, seed_index: int) -> None:
@@ -634,6 +655,7 @@ async def _investigate_experiment_async(
                         all_refs=all_refs,
                         extra_prompt_fragment=extra_prompt_fragment,
                         context_dir=context_dir,
+                        build_context_map=build_context_map,
                     ),
                     timeout=episode_timeout_s,
                 )
