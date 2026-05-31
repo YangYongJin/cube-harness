@@ -17,6 +17,7 @@ ad-hoc bootstrap.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -27,6 +28,13 @@ from cube_harness.analyze.investigator.context import _PATHS_FENCE_RE, INVESTIGA
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONTEXT_MODEL = "claude-opus-4-7"
+
+# Hard wall-clock bound on the context sub-agent. The agent has Bash and can
+# issue a command that blocks indefinitely (a filesystem-wide `find` on a dev
+# machine sits at ~0% CPU for hours); claude-code waits on the tool with no
+# timeout, hanging the whole investigator. A generous ceiling turns an infinite
+# hang into a bounded, catchable failure. Override via `timeout_s=`.
+DEFAULT_CONTEXT_TIMEOUT_S = 900.0
 
 BENCHMARK_CONTEXT_SYSTEM_PROMPT = """You are a setup agent for the cube-harness trajectory investigator.
 
@@ -48,6 +56,13 @@ Bash — your only output is the assistant message containing the markdown.
 2. For each `_type`, resolve the on-disk package directory:
    `python -c "import importlib.util as u; print(u.find_spec('PKG').origin)"`
    returns a file path; the parent directory is what you want.
+   **Always resolve packages this way (importlib), never by scanning the disk.**
+   **NEVER run `find` (or `grep -r`, `ls -R`, `fd`, etc.) rooted at `/`, `~`,
+   `$HOME`, `/Users`, or any directory above a resolved package root.** A
+   filesystem-wide search on a dev machine descends into huge/slow trees
+   (firmlinked `/System/Volumes/Data`, VM/container disk images, caches) and can
+   block at ~0% CPU for *hours* with no output, hanging this whole agent. Scope
+   every `find`/`grep` to a directory you have already resolved via importlib.
 3. Always resolve the `cube_harness` source root and the `cube` (cube-standard)
    source root. Include the infra package root if `infra._type` is present.
 4. **Explore** (this is the value you add): open the resolved packages and find
@@ -63,7 +78,13 @@ Bash — your only output is the assistant message containing the markdown.
      delegates to them (e.g. a `workarena`/`browsergym`-style package). Resolve
      that upstream package on disk and map it too: pointers should follow the
      delegation all the way to where the real task/eval logic lives, not stop
-     at the cube wrapper. Find it by grepping the cube's imports.
+     at the cube wrapper. Find it by grepping the cube's imports, then resolve it
+     with importlib (step 2). **Some cubes do NOT vendor their upstream as an
+     importable package — they fetch task definitions at install time into a
+     cache dir (e.g. a git clone), so `find_spec` will fail.** If the upstream
+     isn't importable, do NOT scan the filesystem for it: note in the map that
+     the real tasks live in an install-time cache (cite the cube code that
+     populates it) and move on. Map what you can resolve; omit the rest.
    - **the verifier — the `evaluate` / reward function: where and exactly how a
      solution is scored. Pin the `path:symbol`** (this may be in the cube *or*
      delegated to the upstream package — follow it).
@@ -193,19 +214,24 @@ async def generate_context_file(
     model: str = DEFAULT_CONTEXT_MODEL,
     verbose: bool = False,
     out_path: Path | None = None,
+    timeout_s: float | None = DEFAULT_CONTEXT_TIMEOUT_S,
 ) -> Path:
     """Invoke the sub-agent and write the `investigation_context.md`.
 
     Writes to `out_path` if given (Auto-CUBE points this at a per-session cache),
     else `<experiment_dir>/investigation_context.md`. The driver is required —
     there is no offline / no-driver fallback.
+
+    `timeout_s` bounds the sub-agent's wall-clock; on expiry a `TimeoutError` is
+    raised (callers treat a failed context-agent as non-fatal and skip). Pass
+    `None` to disable the bound.
     """
     experiment_dir = Path(experiment_dir).resolve()
     out = Path(out_path) if out_path is not None else experiment_dir / INVESTIGATION_CONTEXT_FILENAME
     out.parent.mkdir(parents=True, exist_ok=True)
 
     user_prompt = _user_prompt_for(experiment_dir)
-    result = await driver.run(
+    run_coro = driver.run(
         system_prompt=BENCHMARK_CONTEXT_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         cwd=experiment_dir,
@@ -213,6 +239,13 @@ async def generate_context_file(
         model=model,
         verbose=verbose,
     )
+    try:
+        result = await asyncio.wait_for(run_coro, timeout=timeout_s) if timeout_s else await run_coro
+    except (asyncio.TimeoutError, TimeoutError) as e:
+        raise TimeoutError(
+            f"benchmark-context-agent exceeded {timeout_s}s for {experiment_dir} "
+            "(likely a blocking shell command, e.g. a filesystem-wide `find`)"
+        ) from e
     markdown = _extract_markdown(result.output_text)
     out.write_text(markdown)
     logger.info("benchmark-context-agent wrote %s", out)
