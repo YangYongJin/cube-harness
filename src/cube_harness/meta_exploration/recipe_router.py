@@ -1,11 +1,11 @@
 """L1 — Investigator recipe routing (Phase 4 chunk 3).
 
-Per failed episode, pick which of upstream auto-cube's 4 Investigator
+Per failed episode, pick which of upstream auto-cube's hinting Investigator
 recipes (`hinter` / `general_blame` / `agent_scaffolding` / `profiling`)
 best fits the failure shape. The picked recipe shapes the discipline
 the SDK applies when authoring hints for that episode.
 
-The 4 recipes (per upstream
+The hint-router recipes (per upstream
 `third_party/cube-harness/src/cube_harness/analyze/investigator/use_cases/<name>/SKILL.md`):
 
   * `hinter` — extract `task_hints[task_id]` candidates; default for
@@ -45,8 +45,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-# The 4 Investigator recipes mirror upstream — keep this list aligned with
-# `third_party/cube-harness/src/cube_harness/analyze/investigator/use_cases/`.
+# The hint-router Investigator recipes are a subset of upstream. Upstream also
+# includes harness-specific recipes (e.g. `harness_search`) that are selected by
+# backend-level configuration rather than this per-task hint router.
 Recipe = Literal["hinter", "general_blame", "agent_scaffolding", "profiling"]
 RECIPES: tuple[Recipe, ...] = ("hinter", "general_blame", "agent_scaffolding", "profiling")
 
@@ -196,7 +197,7 @@ def format_routing_for_prompt(decisions: dict[str, RouteDecision]) -> str:
         "## Investigator recipe routing (L1) for this iter",
         "",
         "The outer-loop driver pre-classified each task's failure shape "
-        "into one of the 4 Investigator recipes. Apply the matching "
+        "into one of the hint-router Investigator recipes. Apply the matching "
         "recipe's discipline when authoring hints for each task. "
         "(See `auto_cube/use_cases/hinter/SKILL.md` and "
         "`analyze/investigator/use_cases/<recipe>/SKILL.md` for recipe semantics.)",

@@ -400,8 +400,14 @@ def test_deserialize_output_model_rejects_non_typed_base_model() -> None:
 
 
 def test_recipe_catalog_assembly() -> None:
-    """RECIPE_CATALOG contains the four shipped recipes."""
-    assert set(RECIPE_CATALOG.keys()) == {"general_blame", "profiling", "agent_scaffolding", "hinter"}
+    """RECIPE_CATALOG contains the shipped investigator recipes."""
+    assert set(RECIPE_CATALOG.keys()) == {
+        "general_blame",
+        "profiling",
+        "agent_scaffolding",
+        "hinter",
+        "harness_search",
+    }
     for name, recipe in RECIPE_CATALOG.items():
         assert recipe.name == name
         assert recipe.system_prompt.strip()
@@ -412,6 +418,94 @@ def test_recipe_catalog_assembly() -> None:
         assert not recipe.user_prompt_template.lstrip().startswith("Investigator "), (
             f"{name} user prompt opens with the noun 'Investigator ' — rename artifact"
         )
+
+
+def test_harness_search_recipe_output_model_accepts_recommendations() -> None:
+    recipe = RECIPE_CATALOG["harness_search"]
+    obj = recipe.output_model(
+        analysis="The agent reached the right state but submitted before verifying.",
+        outcome="failure",
+        summary="Premature submission after partial progress.",
+        primary_blame="agent_scaffolding",
+        primary_blame_confidence=4,
+        other_blames=[],
+        evidence=[{"step": 3, "quote": "called submit before checking result"}],
+        hypothesis="Add verification guidance before final submission.",
+        hypothesis_confidence=4,
+        task_hints=[],
+        harness_recommendations=[
+            {
+                "target_fields": ["step_prompt", "description_overrides"],
+                "recommendation": "Require visible success-state verification before final_step.",
+                "scope": "generalizable",
+                "affected_task_ids": ["task-a"],
+                "rationale": "The failure is protocol-level, not task-specific.",
+                "risk": "Could slow tasks that already have obvious terminal states.",
+                "confidence": 4,
+            }
+        ],
+    )
+    assert obj.harness_recommendations[0].scope == "generalizable"
+
+
+def test_harness_search_recipe_drops_non_harness_target_fields() -> None:
+    recipe = RECIPE_CATALOG["harness_search"]
+    obj = recipe.output_model.model_validate(
+        {
+            "analysis": "The useful fix mixes a train-only fact with prompt guidance.",
+            "outcome": "failure",
+            "summary": "Investigator included task_hints in target_fields.",
+            "primary_blame": "agent_scaffolding",
+            "primary_blame_confidence": 4,
+            "other_blames": [],
+            "evidence": [{"step": 1, "quote": "task-specific fact and prompt issue"}],
+            "hypothesis": "Keep task_hints out of scaffold field names.",
+            "hypothesis_confidence": 4,
+            "task_hints": [],
+            "harness_recommendations": [
+                {
+                    "target_fields": ["task_hints", "task_clarification", "step_prompt"],
+                    "recommendation": "Add verification guidance, while preserving exact facts as task_hints.",
+                    "scope": "uncertain",
+                    "affected_task_ids": ["task-a"],
+                    "rationale": "task_hints is a separate output channel, not a harness field.",
+                    "risk": "",
+                    "confidence": 3,
+                }
+            ],
+        }
+    )
+    assert obj.harness_recommendations[0].target_fields == ["step_prompt"]
+
+
+def test_harness_search_recipe_normalizes_recommendation_scope_aliases() -> None:
+    recipe = RECIPE_CATALOG["harness_search"]
+    obj = recipe.output_model.model_validate(
+        {
+            "analysis": "The investigator used a task-family scope alias.",
+            "outcome": "failure",
+            "summary": "Task-family recommendation should remain usable.",
+            "primary_blame": "agent_scaffolding",
+            "primary_blame_confidence": 4,
+            "other_blames": [],
+            "evidence": [{"step": 2, "quote": "same pattern appears in sibling tasks"}],
+            "hypothesis": "Treat task-family ideas as uncertain scaffold signals.",
+            "hypothesis_confidence": 4,
+            "task_hints": [],
+            "harness_recommendations": [
+                {
+                    "target_fields": ["react_prompt"],
+                    "recommendation": "Add cautious guidance for this task family.",
+                    "scope": "task_family",
+                    "affected_task_ids": ["highlight-text-2"],
+                    "rationale": "It may generalize within a task family, but OOD scope is unclear.",
+                    "risk": "Could over-constrain unrelated text tasks.",
+                    "confidence": 3,
+                }
+            ],
+        }
+    )
+    assert obj.harness_recommendations[0].scope == "uncertain"
 
 
 # ---------------------------------------------------------------------------

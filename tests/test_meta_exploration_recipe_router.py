@@ -218,10 +218,12 @@ def test_format_routing_for_prompt_includes_summary_when_nonempty() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_recipes_constant_matches_upstream_use_cases() -> None:
-    """RECIPES must mirror upstream
-    `analyze/investigator/use_cases/<name>/`. If upstream adds or
-    removes one, this test fires loudly so we know to re-sync."""
+def test_recipes_constant_is_hint_router_subset() -> None:
+    """RECIPES is the per-task hint-router subset.
+
+    Harness-specific recipes are selected by the harness backend, not this
+    hint-authoring router.
+    """
     assert set(RECIPES) == {
         "hinter",
         "general_blame",
@@ -230,7 +232,7 @@ def test_recipes_constant_matches_upstream_use_cases() -> None:
     }
 
 
-def test_recipe_dispatch_instruction_names_all_4_recipes() -> None:
+def test_recipe_dispatch_instruction_names_all_hint_router_recipes() -> None:
     """The SDK system-prompt augmentation must mention every recipe so
     the SDK can pick correctly. A missing recipe means the SDK might
     silently misroute it to whatever fallback it picks."""
@@ -238,3 +240,9 @@ def test_recipe_dispatch_instruction_names_all_4_recipes() -> None:
         assert f"`{recipe}`" in _RECIPE_DISPATCH_INSTRUCTION, (
             f"recipe {recipe!r} missing from _RECIPE_DISPATCH_INSTRUCTION"
         )
+
+
+def test_harness_search_recipe_is_upstream_discoverable() -> None:
+    from cube_harness.analyze.investigator.use_cases import RECIPE_CATALOG
+
+    assert "harness_search" in RECIPE_CATALOG
